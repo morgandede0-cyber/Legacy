@@ -1,0 +1,16 @@
+services:
+  legacy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: legacy-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: Europe/Paris
+    volumes:
+      - legacy_data:/app/data
+
+volumes:
+  legacy_data:
