@@ -89,7 +89,7 @@ def _level_up_embed(info: dict) -> discord.Embed:
     if unlocks:
         desc += '\n\n🔓 **NOUVEAU CONTENU**\n' + '\n'.join(unlocks)
     e=discord.Embed(title='⭐ NIVEAU SUPÉRIEUR !', description=desc, color=discord.Color.gold())
-    e.set_footer(text='Legacy • Ta progression devient plus puissante à chaque niveau')
+    e.set_footer(text='Altherya • Ta progression devient plus puissante à chaque niveau')
     return e
 
 
@@ -133,7 +133,7 @@ async def announce_player_log(guild: discord.Guild | None, user, action: str, *,
         avatar = getattr(getattr(member, "display_avatar", None), "url", None)
         if avatar:
             embed.set_thumbnail(url=avatar)
-        embed.set_footer(text="Legacy • Logs administrateur")
+        embed.set_footer(text="Altherya • Logs administrateur")
         await channel.send(embed=embed)
     except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
         pass
@@ -154,7 +154,7 @@ async def announce_public_result(guild: discord.Guild | None, user, title: str, 
             description=f"{mention} {description}",
             color=color,
         )
-        embed.set_footer(text="Legacy • Résultats publics")
+        embed.set_footer(text="Altherya • Résultats publics")
         await channel.send(embed=embed)
     except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
         pass
@@ -228,7 +228,7 @@ async def announce_gold_activity(guild: discord.Guild | None, user, delta: int, 
         avatar = getattr(getattr(user, "display_avatar", None), "url", None)
         if avatar:
             e.set_thumbnail(url=avatar)
-        e.set_footer(text="Legacy • Résultats publics")
+        e.set_footer(text="Altherya • Résultats publics")
         await channel.send(embed=e)
     except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
         pass
@@ -237,14 +237,14 @@ class WorldHubView(discord.ui.View):
     """Carte du monde publique : chaque destination ouvre une session privée au joueur."""
     def __init__(self):
         super().__init__(timeout=None)
-        legacy_btn = discord.ui.Button(label="Legacy", emoji="👑", style=discord.ButtonStyle.primary, custom_id="legacy:world:city")
+        legacy_btn = discord.ui.Button(label="Altherya", emoji="👑", style=discord.ButtonStyle.primary, custom_id="legacy:world:city")
         forge_btn = discord.ui.Button(label="La Forge de KHAZ\'GORAM", emoji="⚒️", style=discord.ButtonStyle.secondary, custom_id="legacy:world:khaz")
         tower_btn = discord.ui.Button(label="La Tour d’Ashkar", emoji="🗼", style=discord.ButtonStyle.danger, custom_id="legacy:world:ashkar")
 
         async def legacy_cb(interaction: discord.Interaction):
             file = discord.File(PLACES / "hub.png", filename="legacy.png")
             await interaction.response.send_message(
-                content="🏙️ **Legacy**\nBienvenue dans la cité. Choisis ta destination.",
+                content="🏙️ **Altherya**\nBienvenue dans la cité. Choisis ta destination.",
                 file=file, view=HubView(), ephemeral=True
             )
 
@@ -259,7 +259,7 @@ class WorldHubView(discord.ui.View):
             file = discord.File(WORLD_FORGE.KHAZ_GORAM, filename="khaz_goram.png")
             embed = discord.Embed(
                 title="⚒️ La Forge de KHAZ'GORAM",
-                description="Une forge gigantesque, perdue loin de Legacy. **Thorgar** y façonne les équipements des légendes.",
+                description="Une forge gigantesque, perdue loin de Altherya. **Thorgar** y façonne les équipements des légendes.",
                 color=0xB67A2A,
             )
             embed.set_image(url="attachment://khaz_goram.png")
@@ -298,7 +298,7 @@ class HubView(discord.ui.View):
         world = discord.ui.Button(label="Monde", emoji="🌍", style=discord.ButtonStyle.secondary, custom_id="legacy:hub:world")
         async def world_cb(interaction: discord.Interaction):
             file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
-            embed = discord.Embed(title="🌍 Le Monde d\'Elyndor", description="Le brouillard recouvre les destinations encore inconnues. **Legacy** et **KHAZ\'GORAM** sont accessibles.", color=0xB67A2A)
+            embed = discord.Embed(title="🌍 Le Monde d\'Elyndor", description="Le brouillard recouvre les destinations encore inconnues. **Altherya** et **KHAZ\'GORAM** sont accessibles.", color=0xB67A2A)
             embed.set_image(url="attachment://elyndor_map.png")
             await interaction.response.send_message(embed=embed, file=file, view=WorldHubView(), ephemeral=True)
         world.callback = world_cb
@@ -320,18 +320,18 @@ class TavernView(discord.ui.View):
         async def bar_cb(interaction: discord.Interaction):
             await safe_defer(interaction)
             await edit_with_asset(interaction, PLACES / "tavern_barman.png", "barman.png", TavernBarView(),
-                                  "🍺 **Le comptoir de Legacy**\n" + tavern_reputation_content(interaction.user.id))
+                                  "🍺 **Le comptoir de Altherya**\n" + tavern_reputation_content(interaction.user.id))
 
         async def games_cb(interaction: discord.Interaction):
             await safe_defer(interaction)
             await edit_with_asset(interaction, PLACES / "tavern_games.png", "table_jeux.png", TavernGamesView(),
-                                  "🎲 **La table de jeux de Legacy**")
+                                  "🎲 **La table de jeux de Altherya**")
 
         async def troubadour_cb(interaction: discord.Interaction):
             await safe_defer(interaction)
             await edit_with_asset(
                 interaction, PLACES / "tavern_troubadour.png", "troubadour.png", TroubadourView(),
-                "🦊 **Le Troubadour de Legacy**\nLe vieux renard relève les yeux de son luth et t'invite à approcher." + npc_alcohol_reaction(interaction.user.id, "troubadour")
+                "🦊 **Le Troubadour de Altherya**\nLe vieux renard relève les yeux de son luth et t'invite à approcher." + npc_alcohol_reaction(interaction.user.id, "troubadour")
             )
 
         async def leave_cb(interaction: discord.Interaction):
@@ -365,7 +365,7 @@ class TroubadourView(discord.ui.View):
         async def back_cb(interaction: discord.Interaction):
             await safe_defer(interaction)
             await edit_with_asset(interaction, PLACES / "tavern.png", "taverne.png", TavernView(),
-                                  "🍺 **Taverne de Legacy**")
+                                  "🍺 **Taverne de Altherya**")
 
         story.callback = story_cb
         back.callback = back_cb
@@ -506,7 +506,7 @@ class StoryCarouselView(discord.ui.View):
             await safe_defer(i)
             await edit_with_asset(
                 i, PLACES / "tavern_troubadour.png", "troubadour.png", TroubadourView(),
-                "🦊 **Le Troubadour de Legacy**\n« Reviens lorsque tu voudras entendre la suite... »"
+                "🦊 **Le Troubadour de Altherya**\n« Reviens lorsque tu voudras entendre la suite... »"
             )
 
         prev.callback = prev_cb
@@ -600,7 +600,7 @@ def tavern_reputation_content(user_id: int) -> str:
         "Habitué du comptoir": "« Comme d'habitude ? Tu connais le comptoir. »",
         "Pilier de taverne": "« Ah... notre pilier est de retour. Essaie de rester debout cette fois. »",
         "Ivrogne notoire": "« Encore toi ? Je prépare déjà le seau. »",
-        "Alcoolique du coin": "« Regardez qui voilà... l'alcoolique officiel de Legacy ! »",
+        "Alcoolique du coin": "« Regardez qui voilà... l'alcoolique officiel de Altherya ! »",
     }
     limit = int(status.get("limit", 3))
     text = (
@@ -695,7 +695,7 @@ class TavernBarView(discord.ui.View):
         async def back_cb(interaction: discord.Interaction):
             await safe_defer(interaction)
             await edit_with_asset(interaction, PLACES / "tavern.png", "taverne.png", TavernView(),
-                                  "🍺 **Taverne de Legacy**")
+                                  "🍺 **Taverne de Altherya**")
         drink.callback = drink_cb
         round_btn.callback = round_cb
         back.callback = back_cb
@@ -745,7 +745,7 @@ class TavernDrinkSelect(discord.ui.Select):
             if event.get("achievement"):
                 await announce_achievement(interaction, str(event["achievement"]))
             if event.get("legendary"):
-                await announce_public_result(interaction.guild, interaction.user, "🍺 Une soirée dont Legacy se souviendra...",
+                await announce_public_result(interaction.guild, interaction.user, "🍺 Une soirée dont Altherya se souviendra...",
                                              f"vient de provoquer un événement d'ivresse **extrêmement rare** à la Taverne. Les détails restent entre lui et le Tavernier.", color=discord.Color.dark_gold())
         drink_line = f"{emoji} Tu bois un verre de **{label}**.\n🍻 Réputation : **{rep['label']}** • **{rep['drinks']} verre(s)**\n🥴 État : **{rep.get('drunk_state','Sobre')}**" + extra
         if event and event.get("id") == "horse_judges":
@@ -772,7 +772,7 @@ class TavernDrinksView(discord.ui.View):
                 PLACES / "tavern_barman.png",
                 "barman.png",
                 TavernBarView(),
-                "🍺 **Le comptoir de Legacy**\n" + tavern_reputation_content(interaction.user.id)
+                "🍺 **Le comptoir de Altherya**\n" + tavern_reputation_content(interaction.user.id)
             )
 
         back.callback = back_cb
@@ -813,7 +813,7 @@ class TavernGamesView(discord.ui.View):
         async def back_cb(interaction: discord.Interaction):
             await safe_defer(interaction)
             await edit_with_asset(interaction, PLACES / "tavern.png", "taverne.png", TavernView(),
-                                  "🍺 **Taverne de Legacy**")
+                                  "🍺 **Taverne de Altherya**")
         back.callback = back_cb
         self.add_item(back)
 
@@ -1122,7 +1122,7 @@ def tavern_render_path(session_id: str, game: str) -> Path:
 async def show_tavern_games(interaction: discord.Interaction):
     await safe_defer(interaction)
     await edit_with_asset(interaction, PLACES / "tavern_games.png", "table_jeux.png", TavernGamesView(),
-                          f"🎲 **La table de jeux de Legacy**\n💰 Ton Gold : **{TAVERN_STORE.wallet(interaction.user.id)}**")
+                          f"🎲 **La table de jeux de Altherya**\n💰 Ton Gold : **{TAVERN_STORE.wallet(interaction.user.id)}**")
 
 
 class TavernBetModal(discord.ui.Modal):
@@ -1411,7 +1411,7 @@ async def announce_achievement(interaction: discord.Interaction, achievement_key
         embed.add_field(name="Rareté", value=f"{ach.rarity_emoji} **{ach.rarity}**", inline=True)
         embed.add_field(name="Progression", value=f"**{progress}/{branch_total}**", inline=True)
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
-        embed.set_footer(text="Legacy • Système de succès")
+        embed.set_footer(text="Altherya • Système de succès")
         await channel.send(embed=embed)
         await announce_player_log(interaction.guild, interaction.user, f"Succès débloqué : {ach.title}", category="Succès", details=f"Branche : {ach.branch_label} • Rareté : {ach.rarity}")
     except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
@@ -1420,7 +1420,7 @@ async def announce_achievement(interaction: discord.Interaction, achievement_key
 
 def achievements_setup_embed() -> discord.Embed:
     embed = discord.Embed(
-        title="🏆 Succès & Résultats des jeux de Legacy",
+        title="🏆 Succès & Résultats des jeux de Altherya",
         description=(
             "Ce salon est désormais le **salon officiel des succès et des résultats de jeux**.\n"
             "Seuls les gains et pertes des jeux de la **Taverne** et de la **salle clandestine** sont publics ici.\n"
@@ -1434,7 +1434,7 @@ def achievements_setup_embed() -> discord.Embed:
         rarity, emoji, _ = RARITIES[tier]
         lines.append(f"{emoji} **Niveau {tier} — {rarity}**")
     embed.add_field(name="Niveaux de difficulté", value="\n".join(lines), inline=False)
-    embed.set_footer(text="Legacy • 5 succès par branche")
+    embed.set_footer(text="Altherya • 5 succès par branche")
     return embed
 
 
@@ -1450,7 +1450,7 @@ def market_buy_embed(user_id:int,index:int,notice:str|None=None)->discord.Embed:
 
     if not items:
         embed=discord.Embed(
-            title="🛍️ Boutique de Legacy",
+            title="🛍️ Boutique de Altherya",
             description=(
                 "✅ **Tout l'équipement de départ est déjà en ta possession.**\n\n"
                 "Les objets achetés disparaissent automatiquement de la boutique afin d'empêcher les doublons."
@@ -1460,7 +1460,7 @@ def market_buy_embed(user_id:int,index:int,notice:str|None=None)->discord.Embed:
         embed.add_field(name="🪙 Bourse",value=f"**{balance.wallet} Gold**",inline=False)
         if notice:
             embed.add_field(name="Résultat",value=notice,inline=False)
-        embed.set_footer(text="Marché de Legacy • Équipement de départ complet")
+        embed.set_footer(text="Marché de Altherya • Équipement de départ complet")
         return embed
 
     index%=len(items)
@@ -1648,7 +1648,7 @@ class StoryMarketView(discord.ui.View):
         async def back_cb(i):
             if not await guard(i): return
             await safe_defer(i)
-            await edit_with_asset(i, PLACES/"market.png", "marche.png", MarketView(), "🛒 **Marché de Legacy**\nQue veux-tu faire ?" + npc_alcohol_reaction(i.user.id, "marchand"))
+            await edit_with_asset(i, PLACES/"market.png", "marche.png", MarketView(), "🛒 **Marché de Altherya**\nQue veux-tu faire ?" + npc_alcohol_reaction(i.user.id, "marchand"))
 
         prev.callback = prev_cb
         buy.callback = buy_cb
@@ -1752,7 +1752,7 @@ class MarketBuyView(discord.ui.View):
         back=discord.ui.Button(label="Retour au marché",emoji="↩️",style=discord.ButtonStyle.primary,row=1)
         async def back_cb(i):
             await safe_defer(i)
-            await edit_with_asset(i,PLACES/"market.png","marche.png",MarketView(),"🛒 **Marché de Legacy**\nQue veux-tu faire ?" + npc_alcohol_reaction(i.user.id, "marchand"))
+            await edit_with_asset(i,PLACES/"market.png","marche.png",MarketView(),"🛒 **Marché de Altherya**\nQue veux-tu faire ?" + npc_alcohol_reaction(i.user.id, "marchand"))
         back.callback=back_cb
         self.add_item(back)
 
@@ -1804,7 +1804,7 @@ class MarketSellView(discord.ui.View):
         super().__init__(timeout=300); self.owner_id=int(owner_id); self.add_item(MarketSellSelect(owner_id))
         back=discord.ui.Button(label="Retour au marché",emoji="↩️",style=discord.ButtonStyle.secondary,row=1)
         async def cb(i):
-            await safe_defer(i); await edit_with_asset(i,PLACES/"market.png","marche.png",MarketView(),"🛒 **Marché de Legacy**\nQue veux-tu faire ?" + npc_alcohol_reaction(i.user.id, "marchand"))
+            await safe_defer(i); await edit_with_asset(i,PLACES/"market.png","marche.png",MarketView(),"🛒 **Marché de Altherya**\nQue veux-tu faire ?" + npc_alcohol_reaction(i.user.id, "marchand"))
         back.callback=cb; self.add_item(back)
 
 
@@ -1968,7 +1968,7 @@ class BankAmountView(discord.ui.View):
                 PLACES / "bank.png",
                 "banque.png",
                 BankView(),
-                "🏦 **Banque de Legacy**\nQue veux-tu faire ?",
+                "🏦 **Banque de Altherya**\nQue veux-tu faire ?",
             )
 
         maximum.callback = max_cb
@@ -1994,7 +1994,7 @@ def bank_amount_content(mode: str, user_id: int, amount: int) -> str:
 
     if mode == "deposit":
         return (
-            "💰 **Banque de Legacy — Dépôt**\n"
+            "💰 **Banque de Altherya — Dépôt**\n"
             f"Sur toi : **{b.wallet:,} Gold**\n"
             f"À la banque : **{b.bank:,} Gold**\n\n"
             f"Montant sélectionné : **{amount:,} Gold**\n"
@@ -2007,7 +2007,7 @@ def bank_amount_content(mode: str, user_id: int, amount: int) -> str:
     received = amount - fee
     status = "🎁 **Retrait gratuit disponible**" if free else "⚠️ **Retrait gratuit déjà utilisé : frais de 10 %**"
     return (
-        "💸 **Banque de Legacy — Retrait**\n"
+        "💸 **Banque de Altherya — Retrait**\n"
         f"Sur toi : **{b.wallet:,} Gold**\n"
         f"À la banque : **{b.bank:,} Gold**\n"
         f"{status}\n\n"
@@ -2048,7 +2048,7 @@ async def fighter_with_equipment(user_id:int, name:str, class_key:str) -> Fighte
     return Fighter(user_id, name, class_key, max_hp=max_hp, equipment_atk_pct=st.atk_bonus_pct, equipment_def_pct=st.def_bonus_pct, equipment_speed_pct=st.speed_bonus_pct)
 
 def arena_home_content(user_id: int | None = None) -> str:
-    base = "⚔️ **Arène de Legacy**\nChoisis ton défi."
+    base = "⚔️ **Arène de Altherya**\nChoisis ton défi."
     if user_id is None:
         return base
     friend_left = ARENA_STORE.friend_remaining(user_id)
@@ -2592,7 +2592,7 @@ def forge_home_content(user_id:int)->str:
     for key,(emoji,label) in FORGE_EQUIPMENT.items():
         if owned.get(key): lines.append(f"{emoji} **{_gear_name(key,_gear_level(g,key))}** — Niv.{_gear_level(g,key)}/5")
         else: lines.append(f"{emoji} **{label}** — 🔒 à acheter au Marché")
-    return "🔨 **Forge de Legacy**\n\n🔥 Niveau joueur : **"+str(lvl)+"**\n\n"+"\n".join(lines) + npc_alcohol_reaction(user_id, "forgeron")
+    return "🔨 **Forge de Altherya**\n\n🔥 Niveau joueur : **"+str(lvl)+"**\n\n"+"\n".join(lines) + npc_alcohol_reaction(user_id, "forgeron")
 
 def forge_carousel_embed(user_id:int,index:int=0,notice:str|None=None)->discord.Embed:
     """Carrousel graphique de la Forge : un équipement affiché à la fois."""
@@ -2786,7 +2786,7 @@ def expedition_home_content(user_id: int) -> str:
         tool = TOOL_META[active.tool_key]
         status = "✅ **Terminée — loots disponibles !**" if active.finished else f"⏳ **En cours — {format_duration(active.remaining_seconds)} restantes**"
         return (
-            "🧭 **Tableau des Expéditions de Legacy**\n"
+            "🧭 **Tableau des Expéditions de Altherya**\n"
             f"Niveau joueur : **{level}**\n\n"
             f"{zone['emoji']} **{zone['name']}** — {status}\n"
             f"{tool['emoji']} {TOOL_LEVELS[active.tool_level][active.tool_key]} • "
@@ -2794,7 +2794,7 @@ def expedition_home_content(user_id: int) -> str:
             "Une seule expédition peut être active à la fois."
         )
     return (
-        "🧭 **Tableau des Expéditions de Legacy**\n"
+        "🧭 **Tableau des Expéditions de Altherya**\n"
         f"Niveau joueur : **{level}**\n\n"
         "Configure ton équipement et ta destination avant de partir.\n"
         f"⛏️ Pioche Niv.{gear.pickaxe_level} • 🪓 Hache Niv.{gear.axe_level} • 🗡️ Lance Niv.{gear.spear_level}\n"
@@ -3158,7 +3158,7 @@ class ExpeditionConfigView(discord.ui.View):
                 if not ok:
                     await interaction.followup.send(f"❌ {msg}", ephemeral=True); return
 
-                # L'interface privée reste dans le flux Legacy.
+                # L'interface privée reste dans le flux Altherya.
                 await edit_with_asset(
                     interaction, PLACES / "expeditions.png", "expeditions.png", ExpeditionView(),
                     "🚩 **Expédition lancée !**\n\nUn panneau de suivi vient d'être créé avec l'image de l'expédition. "
@@ -3372,7 +3372,7 @@ def alley_home_content(user_id: int) -> str:
     rep = DARK_STORE.criminal_reputation(user_id)
     remaining = DARK_STORE.ban_remaining(user_id)
     if remaining: return f"🔒 **Accès refusé**\n⏳ Retour dans **{short_time(remaining)}**."
-    return ("🌑 **Ruelle sombre de Legacy**\n"
+    return ("🌑 **Ruelle sombre de Altherya**\n"
             f"🐺 Réputation : **{rep['label']}** • Méfaits : **{rep['successes']}**\n\n"
             "🔓 Petite frappe : vols de PNJ et joueurs\n🔓 Bandit : crimes\n🔓 Criminel : braquages\n🔓 Seigneur de la Ruelle : contrats spéciaux")
 
@@ -3394,7 +3394,7 @@ def robber_content(user_id: int) -> str:
                 f"🔐 {HEIST_CODE_LENGTH} chiffres différents • 🎯 {heist.attempts_left}/{HEIST_ATTEMPTS} essais\n"
                 "🟢 bien placé · 🟠 mal placé · ⚫ incorrect" + npc_alcohol_reaction(user_id, "braqueur"))
     return ("🐯 **Le Braqueur**\nTon rang criminel permet désormais de préparer des braquages.\n"
-            "🏦 Première cible disponible : **Banque de Legacy**. D'autres cibles pourront rejoindre le réseau." + npc_alcohol_reaction(user_id, "braqueur"))
+            "🏦 Première cible disponible : **Banque de Altherya**. D'autres cibles pourront rejoindre le réseau." + npc_alcohol_reaction(user_id, "braqueur"))
 
 
 def guard_content(user_id: int) -> str:
@@ -3857,7 +3857,7 @@ def casino_home_content(user_id: int) -> str:
     max_bet = VIP_MAX_BET if loyalty.get("vip") else MAX_BET
     return (
         "♠️ **SALLE DE JEUX CLANDESTINE**\n"
-        "Les prédateurs de Legacy misent gros et ne quittent jamais la table des yeux.\n\n"
+        "Les prédateurs de Altherya misent gros et ne quittent jamais la table des yeux.\n\n"
         f"💰 Gold sur toi : **{wallet}**\n"
         f"🎰 Fidélité : **{loyalty['label']}** • **{loyalty['wins']} victoires**\n"
         f"🎟️ Accès journalier : **{left}**\n"
@@ -4258,7 +4258,7 @@ RUSSIAN_STATES: dict[str,dict]={}
 async def start_russian_roulette(interaction: discord.Interaction, session_id: str, wager: int):
     RUSSIAN_STATES[session_id]={"owner":interaction.user.id,"wager":wager,"danger":random.randint(1,6),"step":0,"turn":"player"}
     await edit_with_asset(interaction, PLACES/"casino_room.png","casino.png",RussianRouletteView(interaction.user.id,session_id),
-                          f"💀 **ROULETTE RUSSE — version fictive de Legacy**\nMise : **{wager} Gold**\n\nFace à toi, un hyène mafieux sourit. Le tour est représenté par un barillet de jeu à **6 cases**.\nÀ toi de tenter ta chance.")
+                          f"💀 **ROULETTE RUSSE — version fictive de Altherya**\nMise : **{wager} Gold**\n\nFace à toi, un hyène mafieux sourit. Le tour est représenté par un barillet de jeu à **6 cases**.\nÀ toi de tenter ta chance.")
 
 class RussianRouletteView(discord.ui.View):
     def __init__(self,owner_id:int,session_id:str):
@@ -4539,7 +4539,7 @@ async def show_player_profile(interaction):
     last_chapter=STORY_STORE.last_read_chapter(uid,1)
     e=discord.Embed(
         title=f'📜 Fiche de {interaction.user.display_name}',
-        description=f'⭐ **Niveau {lvl}** • **{cur}/{need} XP**\nVue complète de ta progression dans Legacy.'
+        description=f'⭐ **Niveau {lvl}** • **{cur}/{need} XP**\nVue complète de ta progression dans Altherya.'
     )
     e.set_thumbnail(url=interaction.user.display_avatar.url)
     e.add_field(name='💰 Fortune',value=f'Poche : **{b.wallet:,}**\nBanque : **{b.bank:,}**\nTotal : **{b.wallet+b.bank:,} Gold**'.replace(',',' '),inline=True)
@@ -4550,7 +4550,7 @@ async def show_player_profile(interaction):
     e.add_field(name='🎰 Fidélité Casino',value=f'**{casino["label"]}**\n{casino["wins"]} victoire(s)',inline=True)
     e.add_field(name='📖 Chroniques',value=f'Chapitres débloqués : **{chapters}/30**\nDernier chapitre consulté : **{last_chapter}**',inline=True)
     e.add_field(name='🏆 Succès',value=f'**{achievements}** succès débloqué(s)',inline=True)
-    e.set_footer(text='Legacy • Fiche joueur • Informations mises à jour à chaque ouverture')
+    e.set_footer(text='Altherya • Fiche joueur • Informations mises à jour à chaque ouverture')
     await interaction.edit_original_response(content='📜 **FICHE JOUEUR — PANNEAU CENTRAL**',attachments=[],embeds=[e],view=CentralBoardBackView())
 
 # Compatibilité interne : les anciens appels éventuels affichent désormais la fiche du panneau central.
@@ -4696,7 +4696,7 @@ async def _open_place_after_scene(interaction: discord.Interaction, destination:
                forge_home_content(interaction.user.id) if destination == "forge" else
                alley_home_content(interaction.user.id) if destination == "alley" else
                castle_home_content(interaction.user.id) if destination == "castle" else
-               f"{data['emoji']} **{data['label']} de Legacy**")
+               f"{data['emoji']} **{data['label']} de Altherya**")
     if notice:
         content = notice + "\n\n" + content
     await edit_with_asset(interaction, PLACES/data["image"], "lieu.png", view, content)
@@ -4863,7 +4863,7 @@ async def _send_personal_place(interaction: discord.Interaction, destination: st
         forge_home_content(interaction.user.id) if destination == "forge" else
         alley_home_content(interaction.user.id) if destination == "alley" else
         castle_home_content(interaction.user.id) if destination == "castle" else
-        f"{data['emoji']} **{data['label']} de Legacy**"
+        f"{data['emoji']} **{data['label']} de Altherya**"
     )
     file = discord.File(image, filename="lieu.png")
     await interaction.response.send_message(
@@ -4919,7 +4919,7 @@ async def _publish_hub(channel: discord.abc.Messageable) -> discord.Message:
     file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
     embed = discord.Embed(
         title="🌍 Le Monde d'Elyndor",
-        description="Le brouillard recouvre encore une grande partie d’Elyndor. **Legacy** est accessible dès le départ, **KHAZ'GORAM** au niveau 3 et **La Tour d’Ashkar** au niveau 5.",
+        description="Le brouillard recouvre encore une grande partie d’Elyndor. **Altherya** est accessible dès le départ, **KHAZ'GORAM** au niveau 3 et **La Tour d’Ashkar** au niveau 5.",
         color=0xB67A2A,
     )
     embed.set_image(url="attachment://elyndor_map.png")
@@ -4935,7 +4935,7 @@ async def ensure_fixed_hub():
     try:
         channel = bot.get_channel(int(channel_id)) or await bot.fetch_channel(int(channel_id))
         message = await channel.fetch_message(int(message_id))
-        embed = discord.Embed(title="🌍 Le Monde d'Elyndor", description="Le brouillard recouvre encore une grande partie d’Elyndor. **Legacy** est accessible dès le départ, **KHAZ'GORAM** au niveau 3 et **La Tour d’Ashkar** au niveau 5.", color=0xB67A2A)
+        embed = discord.Embed(title="🌍 Le Monde d'Elyndor", description="Le brouillard recouvre encore une grande partie d’Elyndor. **Altherya** est accessible dès le départ, **KHAZ'GORAM** au niveau 3 et **La Tour d’Ashkar** au niveau 5.", color=0xB67A2A)
         embed.set_image(url="attachment://elyndor_map.png")
         file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
         await message.edit(
@@ -4994,7 +4994,7 @@ async def announce_achievement_for(guild: discord.Guild, user: discord.abc.User,
         embed.add_field(name="Rareté", value=f"{ach.rarity_emoji} **{ach.rarity}**", inline=True)
         embed.add_field(name="Progression", value=f"**{progress}/{branch_total}**", inline=True)
         embed.set_thumbnail(url=user.display_avatar.url)
-        embed.set_footer(text="Legacy • Système de succès • Attribution admin")
+        embed.set_footer(text="Altherya • Système de succès • Attribution admin")
         await channel.send(embed=embed)
     except (discord.NotFound, discord.Forbidden, discord.HTTPException):
         pass
@@ -5049,9 +5049,9 @@ class AdminLevelView(discord.ui.View):
         self.add_item(plus); self.add_item(minus)
 
 async def _ensure_muted_role(guild: discord.Guild) -> discord.Role:
-    role = discord.utils.get(guild.roles, name="Legacy Muted")
+    role = discord.utils.get(guild.roles, name="Altherya Muted")
     if role is None:
-        role = await guild.create_role(name="Legacy Muted", reason="Legacy /admin — mute permanent")
+        role = await guild.create_role(name="Altherya Muted", reason="Altherya /admin — mute permanent")
     for channel in guild.channels:
         try:
             overwrite = channel.overwrites_for(role)
@@ -5059,7 +5059,7 @@ async def _ensure_muted_role(guild: discord.Guild) -> discord.Role:
                 overwrite.send_messages=False; overwrite.add_reactions=False; overwrite.create_public_threads=False; overwrite.create_private_threads=False; overwrite.send_messages_in_threads=False
             if isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
                 overwrite.speak=False
-            await channel.set_permissions(role, overwrite=overwrite, reason="Legacy /admin — permissions mute")
+            await channel.set_permissions(role, overwrite=overwrite, reason="Altherya /admin — permissions mute")
         except (discord.Forbidden, discord.HTTPException, AttributeError):
             pass
     return role
@@ -5101,14 +5101,14 @@ class AdminModerationView(discord.ui.View):
             m=await _get_member(i,self.target_id)
             if not m: await i.response.send_message("❌ Membre introuvable.",ephemeral=True); return
             try:
-                await m.kick(reason=f"Legacy /admin par {i.user}"); ADMIN_STORE.log(i.user.id,m.id,'kick'); await i.response.send_message(f"👢 **{m}** a été expulsé.",ephemeral=True)
+                await m.kick(reason=f"Altherya /admin par {i.user}"); ADMIN_STORE.log(i.user.id,m.id,'kick'); await i.response.send_message(f"👢 **{m}** a été expulsé.",ephemeral=True)
             except (discord.Forbidden,discord.HTTPException) as e: await i.response.send_message(f"❌ Kick impossible : {e}",ephemeral=True)
         async def b(i):
             if not await _admin_guard(i): return
             m=await _get_member(i,self.target_id)
             if not m: await i.response.send_message("❌ Membre introuvable.",ephemeral=True); return
             try:
-                await i.guild.ban(m,reason=f"Legacy /admin par {i.user}",delete_message_seconds=0); ADMIN_STORE.log(i.user.id,m.id,'ban'); await i.response.send_message(f"🔨 **{m}** a été banni.",ephemeral=True)
+                await i.guild.ban(m,reason=f"Altherya /admin par {i.user}",delete_message_seconds=0); ADMIN_STORE.log(i.user.id,m.id,'ban'); await i.response.send_message(f"🔨 **{m}** a été banni.",ephemeral=True)
             except (discord.Forbidden,discord.HTTPException) as e: await i.response.send_message(f"❌ Ban impossible : {e}",ephemeral=True)
         async def t(i):
             if await _admin_guard(i): await i.response.send_modal(TempMuteModal(self.target_id))
@@ -5117,16 +5117,16 @@ class AdminModerationView(discord.ui.View):
             m=await _get_member(i,self.target_id)
             if not m: await i.response.send_message("❌ Membre introuvable.",ephemeral=True); return
             try:
-                role=await _ensure_muted_role(i.guild); await m.add_roles(role,reason=f"Legacy /admin par {i.user}"); ADMIN_STORE.log(i.user.id,m.id,'mute_perm'); await i.response.send_message(f"🔇 {m.mention} est mute **jusqu'à retrait manuel**.",ephemeral=True)
+                role=await _ensure_muted_role(i.guild); await m.add_roles(role,reason=f"Altherya /admin par {i.user}"); ADMIN_STORE.log(i.user.id,m.id,'mute_perm'); await i.response.send_message(f"🔇 {m.mention} est mute **jusqu'à retrait manuel**.",ephemeral=True)
             except (discord.Forbidden,discord.HTTPException) as e: await i.response.send_message(f"❌ Mute impossible : {e}",ephemeral=True)
         async def u(i):
             if not await _admin_guard(i): return
             m=await _get_member(i,self.target_id)
             if not m: await i.response.send_message("❌ Membre introuvable.",ephemeral=True); return
             try:
-                await m.timeout(None,reason=f"Legacy /admin unmute par {i.user}")
-                role=discord.utils.get(i.guild.roles,name="Legacy Muted")
-                if role and role in m.roles: await m.remove_roles(role,reason=f"Legacy /admin par {i.user}")
+                await m.timeout(None,reason=f"Altherya /admin unmute par {i.user}")
+                role=discord.utils.get(i.guild.roles,name="Altherya Muted")
+                if role and role in m.roles: await m.remove_roles(role,reason=f"Altherya /admin par {i.user}")
                 ADMIN_STORE.log(i.user.id,m.id,'unmute'); await i.response.send_message(f"🔊 {m.mention} peut de nouveau parler.",ephemeral=True)
             except (discord.Forbidden,discord.HTTPException) as e: await i.response.send_message(f"❌ Unmute impossible : {e}",ephemeral=True)
         kick.callback=k; ban.callback=b; temp.callback=t; perm.callback=p; unmute.callback=u
@@ -5243,7 +5243,7 @@ class AdminEventsView(discord.ui.View):
                 if not await _admin_guard(i): return
                 new=not ADMIN_STORE.event_enabled(k); ADMIN_STORE.set_event(k,new,i.user.id)
                 await announce_player_log(i.guild, i.user, f"Événement {EVENTS[k][0]} {'activé' if new else 'désactivé'}", category="Administration")
-                await i.response.edit_message(content="🎉 **Gestion des événements**\nLes multiplicateurs s'appliquent aux récompenses générées par Legacy.",view=AdminEventsView())
+                await i.response.edit_message(content="🎉 **Gestion des événements**\nLes multiplicateurs s'appliquent aux récompenses générées par Altherya.",view=AdminEventsView())
             b.callback=cb; self.add_item(b)
 
 class AdminSuccessActionView(discord.ui.View):
@@ -5318,7 +5318,7 @@ class AdminPanelView(discord.ui.View):
                     await i.response.send_message(f"{title} — sélectionne un joueur.",view=AdminTargetView(a),ephemeral=True)
             b.callback=cb; self.add_item(b)
 
-@bot.tree.command(name="admin", description="Ouvre le panneau d'administration de Legacy")
+@bot.tree.command(name="admin", description="Ouvre le panneau d'administration de Altherya")
 @app_commands.default_permissions(administrator=True)
 @app_commands.checks.has_permissions(administrator=True)
 async def admin(interaction: discord.Interaction):
@@ -5326,12 +5326,12 @@ async def admin(interaction: discord.Interaction):
         await interaction.response.send_message("❌ Cette commande doit être utilisée dans un serveur.",ephemeral=True); return
     gold='🟢 ON' if ADMIN_STORE.event_enabled('gold_x2') else '⚫ OFF'
     xp='🟢 ON' if ADMIN_STORE.event_enabled('xp_x2') else '⚫ OFF'
-    embed=discord.Embed(title="🛡️ Panneau d'administration — Legacy",description="Gestion du bot et des joueurs. Toutes les actions sont privées et journalisées.",color=discord.Color.dark_gold())
+    embed=discord.Embed(title="🛡️ Panneau d'administration — Altherya",description="Gestion du bot et des joueurs. Toutes les actions sont privées et journalisées.",color=discord.Color.dark_gold())
     embed.add_field(name="Événements",value=f"💰 Gold x2 : **{gold}**\n✨ XP x2 : **{xp}**",inline=False)
     cooldowns='🟢 ON' if ADMIN_STORE.cooldowns_enabled() else '🔴 OFF'
     embed.add_field(name="Cooldowns",value=f"⏱️ Cooldowns globaux : **{cooldowns}**",inline=False)
     embed.add_field(name="Outils",value="💰 Argent • 📈 Niveaux • 🎉 Événements • 🛡️ Modération • 🏆 Succès • 🎒 Items • ⏱️ Cooldowns",inline=False)
-    embed.set_footer(text="Legacy Admin • réservé aux administrateurs")
+    embed.set_footer(text="Altherya Admin • réservé aux administrateurs")
     await interaction.response.send_message(embed=embed,view=AdminPanelView(),ephemeral=True)
 
 @admin.error
@@ -5343,7 +5343,7 @@ async def admin_error(interaction: discord.Interaction,error: app_commands.AppCo
         return
     raise error
 
-@bot.tree.command(name="succes", description="Définit le salon public des succès et résultats de jeux de Legacy")
+@bot.tree.command(name="succes", description="Définit le salon public des succès et résultats de jeux de Altherya")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def succes(interaction: discord.Interaction):
     """Configure le salon public dans lequel les succès seront annoncés."""
@@ -5352,7 +5352,7 @@ async def succes(interaction: discord.Interaction):
         return
     ACHIEVEMENT_STORE.set_channel(interaction.guild.id, interaction.channel.id)
     await interaction.response.send_message(
-        f"✅ Ce salon devient le **salon officiel des succès et des résultats de jeux** de Legacy.",
+        f"✅ Ce salon devient le **salon officiel des succès et des résultats de jeux** de Altherya.",
         ephemeral=True,
     )
     await interaction.channel.send(embed=achievements_setup_embed())
@@ -5369,16 +5369,16 @@ async def succes_error(interaction: discord.Interaction, error: app_commands.App
     raise error
 
 
-@bot.tree.command(name="logs", description="Définit le salon privé des logs complets de Legacy")
+@bot.tree.command(name="logs", description="Définit le salon privé des logs complets de Altherya")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def logs(interaction: discord.Interaction):
     if interaction.guild is None or interaction.channel is None:
         await interaction.response.send_message("❌ Cette commande doit être utilisée dans un serveur.", ephemeral=True)
         return
     ACHIEVEMENT_STORE.set_log_channel(interaction.guild.id, interaction.channel.id)
-    await interaction.response.send_message("✅ Ce salon devient le **salon des logs complets** de Legacy.", ephemeral=True)
+    await interaction.response.send_message("✅ Ce salon devient le **salon des logs complets** de Altherya.", ephemeral=True)
     embed = discord.Embed(
-        title="📋 Logs Legacy activés",
+        title="📋 Logs Altherya activés",
         description=(
             "Ce salon reçoit les actions détaillées des joueurs : achats, ventes, banque, Forge, expéditions, "
             "mouvements de Gold, casino, succès et actions administratives reliées au bot.\n\n"
@@ -5386,7 +5386,7 @@ async def logs(interaction: discord.Interaction):
         ),
         color=discord.Color.dark_grey(),
     )
-    embed.set_footer(text="Legacy • Journal administrateur")
+    embed.set_footer(text="Altherya • Journal administrateur")
     await interaction.channel.send(embed=embed)
 
 @logs.error
@@ -5403,7 +5403,7 @@ async def logs_error(interaction: discord.Interaction, error: app_commands.AppCo
 
 
 async def publish_gazette(guild: discord.Guild, config: dict, now_ts: int | None = None) -> bool:
-    """Publie uniquement des faits réellement présents dans la BDD Legacy."""
+    """Publie uniquement des faits réellement présents dans la BDD Altherya."""
     now_ts = int(now_ts or __import__('time').time())
     since_ts = int(config.get('last_published_at') or (now_ts - 24 * 3600))
     channel_id = int(config['channel_id'])
@@ -5432,7 +5432,7 @@ async def publish_gazette(guild: discord.Guild, config: dict, now_ts: int | None
     else:
         for title, text in items[:7]:
             embed.add_field(name=title, value=text, inline=False)
-    embed.set_footer(text="Legacy • Gazette quotidienne • Aucun événement inventé")
+    embed.set_footer(text="Altherya • Gazette quotidienne • Aucun événement inventé")
     try:
         await channel.send(embed=embed)
         GAZETTE_STORE.mark_published(guild.id, datetime.now().date().isoformat(), now_ts)
@@ -5443,7 +5443,7 @@ async def publish_gazette(guild: discord.Guild, config: dict, now_ts: int | None
 
 @tasks.loop(seconds=30)
 async def gazette_clock():
-    # Heure locale de la machine serveur, conformément au reste de Legacy : aucune dépendance timezone.
+    # Heure locale de la machine serveur, conformément au reste de Altherya : aucune dépendance timezone.
     now = datetime.now()
     if now.hour < 9:
         return
@@ -5461,7 +5461,7 @@ async def before_gazette_clock():
     await bot.wait_until_ready()
 
 
-@bot.tree.command(name="gazette", description="Définit ce salon comme salon de la Gazette quotidienne de Legacy")
+@bot.tree.command(name="gazette", description="Définit ce salon comme salon de la Gazette quotidienne de Altherya")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def gazette(interaction: discord.Interaction):
     if interaction.guild is None or interaction.channel is None:
@@ -5469,11 +5469,11 @@ async def gazette(interaction: discord.Interaction):
         return
     GAZETTE_STORE.configure(interaction.guild.id, interaction.channel.id)
     await interaction.response.send_message(
-        f"✅ {interaction.channel.mention} devient le **salon officiel de la Gazette de Legacy**.\n"
+        f"✅ {interaction.channel.mention} devient le **salon officiel de la Gazette de Altherya**.\n"
         "🕘 Une édition sera publiée automatiquement **tous les jours à 09:00 (heure locale du serveur)**.\n"
-        "📌 La Gazette utilisera uniquement des événements réellement enregistrés par Legacy.", ephemeral=True)
-    embed = discord.Embed(title="📰 La Gazette de Legacy s'installe ici !",
-                          description="Dès demain matin, retrouvez les exploits, catastrophes et lendemains difficiles des habitants de Legacy.",
+        "📌 La Gazette utilisera uniquement des événements réellement enregistrés par Altherya.", ephemeral=True)
+    embed = discord.Embed(title="📰 La Gazette de Altherya s'installe ici !",
+                          description="Dès demain matin, retrouvez les exploits, catastrophes et lendemains difficiles des habitants de Altherya.",
                           color=discord.Color.from_rgb(176,132,67))
     embed.set_footer(text="Rendez-vous à 09:00")
     await interaction.channel.send(embed=embed)
@@ -5489,7 +5489,7 @@ async def gazette_error(interaction: discord.Interaction, error: app_commands.Ap
     raise error
 
 
-@bot.tree.command(name="legacy", description="Installe ou déplace la carte du monde permanente de Legacy dans ce salon")
+@bot.tree.command(name="altherya", description="Installe ou déplace la carte du monde permanente de Altherya dans ce salon")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def legacy(interaction: discord.Interaction):
     """Installe un unique Hub public fixe dans le salon courant.
@@ -5533,7 +5533,7 @@ async def legacy(interaction: discord.Interaction):
         _save_hub_state(interaction.guild.id, interaction.channel.id, message.id)
         await asyncio.wait_for(
             interaction.edit_original_response(
-                content=f"✅ **Carte du monde de Legacy installée.** Il restera fixe dans {interaction.channel.mention}.\n"
+                content=f"✅ **Carte du monde de Altherya installée.** Il restera fixe dans {interaction.channel.mention}.\n"
                         "Les joueurs peuvent maintenant naviguer chacun dans leur propre interface privée."
             ),
             timeout=10.0,
@@ -5542,7 +5542,7 @@ async def legacy(interaction: discord.Interaction):
         print("[LEGACY /legacy] ERREUR : timeout pendant la publication du Hub.")
         try:
             await interaction.edit_original_response(
-                content="❌ **Le Hub Legacy n'a pas pu être publié : délai d'attente dépassé.**\n"
+                content="❌ **Le Hub Altherya n'a pas pu être publié : délai d'attente dépassé.**\n"
                         "La commande a été arrêtée proprement au lieu de rester bloquée. "
                         "Consulte les logs du conteneur pour identifier l'étape qui ne répond pas."
             )
@@ -5552,7 +5552,7 @@ async def legacy(interaction: discord.Interaction):
         print(f"[LEGACY /legacy] ERREUR publication Hub : {type(exc).__name__}: {exc}")
         try:
             await interaction.edit_original_response(
-                content=f"❌ **Impossible d'installer le Hub Legacy.**\n"
+                content=f"❌ **Impossible d'installer le Hub Altherya.**\n"
                         f"Erreur : `{type(exc).__name__}: {str(exc)[:700]}`"
             )
         except (discord.HTTPException, discord.NotFound):
@@ -5561,7 +5561,7 @@ async def legacy(interaction: discord.Interaction):
 @legacy.error
 async def legacy_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
-        msg = "❌ Seul un administrateur disposant de **Gérer le serveur** peut installer ou déplacer le Hub Legacy."
+        msg = "❌ Seul un administrateur disposant de **Gérer le serveur** peut installer ou déplacer le Hub Altherya."
         if interaction.response.is_done():
             await interaction.followup.send(msg, ephemeral=True)
         else:
@@ -5636,7 +5636,7 @@ async def on_ready():
         print(f"♻️ {RECOVERED_ARENA_BATTLES} combat(s) interrompu(s) remboursé(s) au démarrage")
     if RECOVERED_TAVERN_GAMES:
         print(f"♻️ {RECOVERED_TAVERN_GAMES} partie(s) de taverne interrompue(s) remboursée(s) au démarrage")
-    print(f"🏙️ Legacy V1 connecté : {bot.user}")
+    print(f"🏙️ Altherya V1 connecté : {bot.user}")
 
 if __name__ == "__main__":
     if not TOKEN or TOKEN == "COLLE_TON_TOKEN_ICI":

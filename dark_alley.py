@@ -261,7 +261,7 @@ class DarkAlleyStore:
         user_id = int(user_id)
         rep = self.criminal_reputation(user_id)
         if rep["label"] not in ("Petite frappe", "Bandit", "Criminel", "Seigneur de la Ruelle"):
-            return {"ok": False, "message": "Atteins le rang Petite frappe pour voler les PNJ de Legacy."}
+            return {"ok": False, "message": "Atteins le rang Petite frappe pour voler les PNJ de Altherya."}
         target = NPC_THEFT_TARGETS.get(str(target_key))
         if not target: return {"ok": False, "message": "Cible inconnue."}
         with self._connect() as conn:

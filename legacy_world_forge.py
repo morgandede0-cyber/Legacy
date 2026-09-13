@@ -556,12 +556,12 @@ class WorldView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Legacy", emoji="👑", style=discord.ButtonStyle.primary, custom_id="legacy_world:city")
+    @discord.ui.button(label="Altherya", emoji="👑", style=discord.ButtonStyle.primary, custom_id="legacy_world:city")
     async def legacy(self, interaction: discord.Interaction, button: discord.ui.Button):
         await edit_with_image(
             interaction, LEGACY_CITY,
-            title="🏰 Legacy",
-            description="Bienvenue à Legacy. Choisis ensuite ton lieu dans le système actuel de la ville.\n\n*Branche ici ton ancienne vue de ville si elle possède déjà ses propres boutons.*",
+            title="🏰 Altherya",
+            description="Bienvenue à Altherya. Choisis ensuite ton lieu dans le système actuel de la ville.\n\n*Branche ici ton ancienne vue de ville si elle possède déjà ses propres boutons.*",
             view=LegacyCityBridgeView(),
         )
 
@@ -576,23 +576,23 @@ class WorldView(discord.ui.View):
 
 
 class LegacyCityBridgeView(discord.ui.View):
-    """Pont temporaire vers la ville Legacy existante.
+    """Pont temporaire vers la ville Altherya existante.
 
-    Remplace le callback entrer_ville() par ta vue Legacy actuelle si ton bot la possède déjà.
+    Remplace le callback entrer_ville() par ta vue Altherya actuelle si ton bot la possède déjà.
     Le bouton Monde est déjà prêt.
     """
     def __init__(self): super().__init__(timeout=None)
 
-    @discord.ui.button(label="Entrer dans Legacy", emoji="🏰", style=discord.ButtonStyle.primary, custom_id="legacy_city:enter")
+    @discord.ui.button(label="Entrer dans Altherya", emoji="🏰", style=discord.ButtonStyle.primary, custom_id="legacy_city:enter")
     async def enter(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
-            "🏰 **Legacy est ouverte.** Branche ici ta vue actuelle de la ville (Taverne, Marché, Château, Banque, Arène, Expéditions, Ruelle sombre).",
+            "🏰 **Altherya est ouverte.** Branche ici ta vue actuelle de la ville (Taverne, Marché, Château, Banque, Arène, Expéditions, Ruelle sombre).",
             ephemeral=True,
         )
 
     @discord.ui.button(label="Monde", emoji="🌍", style=discord.ButtonStyle.secondary, custom_id="legacy_city:world")
     async def world(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await edit_with_image(interaction, WORLD_MAP, title="🌍 Le Monde d'Elyndor", description="Trois régions sont actuellement révélées : Legacy, KHAZ'GORAM et la Tour d’Ashkar.", view=WorldView())
+        await edit_with_image(interaction, WORLD_MAP, title="🌍 Le Monde d'Elyndor", description="Trois régions sont actuellement révélées : Altherya, KHAZ'GORAM et la Tour d’Ashkar.", view=WorldView())
 
 
 class KhazGoramView(discord.ui.View):
@@ -609,7 +609,7 @@ class KhazGoramView(discord.ui.View):
 
     @discord.ui.button(label="Monde", emoji="🌍", style=discord.ButtonStyle.secondary, custom_id="khaz:world")
     async def world(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await edit_with_image(interaction, WORLD_MAP, title="🌍 Le Monde d'Elyndor", description="Trois régions sont actuellement révélées : Legacy, KHAZ'GORAM et la Tour d’Ashkar.", view=WorldView())
+        await edit_with_image(interaction, WORLD_MAP, title="🌍 Le Monde d'Elyndor", description="Trois régions sont actuellement révélées : Altherya, KHAZ'GORAM et la Tour d’Ashkar.", view=WorldView())
 
 # ============================================================
 # FORGE VIEWS
@@ -664,7 +664,7 @@ class ThorgarView(discord.ui.View):
 
     @discord.ui.button(label="Monde", emoji="🌍", style=discord.ButtonStyle.secondary)
     async def world(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await edit_with_image(interaction, WORLD_MAP, title="🌍 Le Monde d'Elyndor", description="Trois régions sont actuellement révélées : Legacy, KHAZ'GORAM et la Tour d’Ashkar.", view=WorldView())
+        await edit_with_image(interaction, WORLD_MAP, title="🌍 Le Monde d'Elyndor", description="Trois régions sont actuellement révélées : Altherya, KHAZ'GORAM et la Tour d’Ashkar.", view=WorldView())
 
 
 # ============================================================
@@ -1303,7 +1303,7 @@ class LegacyWorldForge(commands.Cog):
         await send_with_image(
             interaction, WORLD_MAP,
             title="🌍 Le Monde d'Elyndor",
-            description="Le brouillard recouvre encore les terres inconnues. **Legacy**, **La Forge de KHAZ'GORAM** et **La Tour d’Ashkar** sont désormais révélées.",
+            description="Le brouillard recouvre encore les terres inconnues. **Altherya**, **La Forge de KHAZ'GORAM** et **La Tour d’Ashkar** sont désormais révélées.",
             view=WorldView(),
         )
 

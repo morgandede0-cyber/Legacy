@@ -98,7 +98,7 @@ for tier, chapter_goal, title, description in TROUBADOUR_ACHIEVEMENTS:
 # Branches de progression supplémentaires — V1.48.
 EXTRA_ACHIEVEMENT_BRANCHES = {
     "tavern_reputation": ("Réputation de Taverne", "🍺", [
-        (1, "Client discret", "Bois 5 verres à la Taverne de Legacy."),
+        (1, "Client discret", "Bois 5 verres à la Taverne de Altherya."),
         (2, "Habitué du comptoir", "Atteins le palier Habitué du comptoir."),
         (3, "Pilier de taverne", "Atteins le palier Pilier de taverne."),
         (4, "Ivrogne notoire", "Atteins le palier Ivrogne notoire."),
@@ -141,7 +141,7 @@ TAVERN_SECRET_ACHIEVEMENTS = [
     (0,2,1,"C'était pas à moi ?","Un bretzel, un mercenaire, et une très mauvaise lecture de la situation."),
     (1,1,2,"Pourquoi j'ai une poule ?","Gérard fait désormais partie de l'histoire. Ne pose pas de question."),
     (1,2,2,"C'est pas ma chaussure","Deux pieds, deux chaussures, probablement trois propriétaires."),
-    (2,1,3,"Une carrière très courte","Legacy se souviendra de ces quarante secondes de musique."),
+    (2,1,3,"Une carrière très courte","Altherya se souviendra de ces quarante secondes de musique."),
     (2,2,3,"J'ai fait QUOI ?!","Une bague inconnue. Aucun témoin coopératif."),
     (3,1,4,"Il juge mes choix de vie","Le cheval avait l'air profondément déçu."),
     (3,2,4,"Cette porte n'était pas là hier","Tu l'as vue. Tu en es certain. Enfin... presque."),

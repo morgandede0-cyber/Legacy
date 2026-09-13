@@ -3,7 +3,7 @@ import sqlite3, time
 from datetime import datetime
 from pathlib import Path
 
-# La Gazette ne fabrique jamais d'événement : toutes ses lignes viennent de la BDD Legacy.
+# La Gazette ne fabrique jamais d'événement : toutes ses lignes viennent de la BDD Altherya.
 ALCOHOL_COPY = {
     'floor_bed': ('🍺', 'Sous la table', '{name} a été retrouvé complètement torché sous une table. Le mobilier de la Taverne se porte bien.'),
     'why_chicken': ('🐔', 'Gérard fait encore parler de lui', '{name} a terminé sa soirée avec une poule répondant au nom de Gérard. Nous préférons ne pas poser de questions.'),
@@ -115,7 +115,7 @@ class GazetteStore:
                 item = detail or 'une pièce d’équipement'
                 items.append(('⚒️ CHEF-D’ŒUVRE DE KHAZ’GORAM', f'**{name}** vient de forger **{item}** de qualité **Légendaire** chez Thorgar.'))
             elif kind == 'champion_5':
-                items.append(('🏟️ LE MUR DE L’ARÈNE EST TOMBÉ', f'**{name}** a vaincu le **Champion V** de Legacy.'))
+                items.append(('🏟️ LE MUR DE L’ARÈNE EST TOMBÉ', f'**{name}** a vaincu le **Champion V** de Altherya.'))
             elif kind == 'champion_10':
                 items.append(('👑 LE ROI DE L’ARÈNE EST VAINCU', f'**{name}** a terrassé le **Champion X** et termine le parcours des Champions.'))
             elif kind == 'level_milestone':

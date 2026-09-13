@@ -239,7 +239,7 @@ class ExpeditionStore:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_expedition_runs_user ON expedition_runs(user_id, started_at DESC)")
-            # Migrations souples pour les anciennes bases Legacy.
+            # Migrations souples pour les anciennes bases Altherya.
             columns = {str(r["name"]) for r in conn.execute("PRAGMA table_info(expedition_runs)").fetchall()}
             for name, sql_type, default in (
                 ("object1_key", "TEXT", "'none'"),

@@ -1,4 +1,4 @@
-"""Legacy rendering stack.
+"""Altherya rendering stack.
 
 Priority:
 1. resvg + SVG

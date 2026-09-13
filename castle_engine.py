@@ -9,7 +9,7 @@ DAILY_REWARD = 200
 DAILY_XP = 10
 
 # Les 6 quêtes doivent TOUTES être terminées pour débloquer la récompense globale.
-# V1.63 : les objectifs relient directement les grands systèmes de Legacy.
+# V1.63 : les objectifs relient directement les grands systèmes de Altherya.
 QUEST_GLOBAL_GOLD = 400
 QUEST_GLOBAL_XP = 75
 QUESTS = {
