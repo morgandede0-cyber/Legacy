@@ -5494,8 +5494,9 @@ async def gazette_error(interaction: discord.Interaction, error: app_commands.Ap
 async def legacy(interaction: discord.Interaction):
     """Installe un unique Hub public fixe dans le salon courant.
 
-    À lancer une seule fois par un administrateur dans le salon dédié à Legacy.
-    Les joueurs utilisent ensuite directement ses boutons.
+    V1.64.3 : la commande ne peut plus rester bloquée indéfiniment sur
+    « réfléchit… ». Chaque appel Discord sensible possède un timeout et les
+    erreurs sont remontées clairement à l'administrateur.
     """
     if interaction.guild is None or interaction.channel is None:
         await interaction.response.send_message("❌ Cette commande doit être utilisée dans un serveur.", ephemeral=True)
@@ -5504,23 +5505,58 @@ async def legacy(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     old = _load_hub_state()
 
-    # Supprime l'ancien Hub s'il existe afin d'éviter les doublons lors d'un déplacement.
+    # Supprime l'ancien Hub s'il existe. Un ancien message inaccessible ne doit
+    # jamais empêcher l'installation du nouveau Hub.
     try:
         old_channel_id = old.get("channel_id")
         old_message_id = old.get("message_id")
         if old_channel_id and old_message_id:
-            old_channel = bot.get_channel(int(old_channel_id)) or await bot.fetch_channel(int(old_channel_id))
-            old_message = await old_channel.fetch_message(int(old_message_id))
-            await old_message.delete()
-    except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
-        pass
+            old_channel = bot.get_channel(int(old_channel_id))
+            if old_channel is None:
+                old_channel = await asyncio.wait_for(
+                    bot.fetch_channel(int(old_channel_id)), timeout=8.0
+                )
+            old_message = await asyncio.wait_for(
+                old_channel.fetch_message(int(old_message_id)), timeout=8.0
+            )
+            await asyncio.wait_for(old_message.delete(), timeout=8.0)
+    except asyncio.TimeoutError:
+        print("[LEGACY /legacy] Timeout pendant la suppression de l'ancien Hub ; installation poursuivie.")
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError) as exc:
+        print(f"[LEGACY /legacy] Ancien Hub ignoré : {type(exc).__name__}: {exc}")
 
-    message = await _publish_hub(interaction.channel)
-    _save_hub_state(interaction.guild.id, interaction.channel.id, message.id)
-    await interaction.edit_original_response(
-        content=f"✅ **Carte du monde de Legacy installée.** Il restera fixe dans {interaction.channel.mention}.\n"
-                "Les joueurs peuvent maintenant naviguer chacun dans leur propre interface privée."
-    )
+    # Publie le nouveau Hub avec une limite de temps. En cas d'échec, on rend
+    # toujours la main à Discord avec un diagnostic au lieu de laisser tourner
+    # « réfléchit… » sans fin.
+    try:
+        message = await asyncio.wait_for(_publish_hub(interaction.channel), timeout=20.0)
+        _save_hub_state(interaction.guild.id, interaction.channel.id, message.id)
+        await asyncio.wait_for(
+            interaction.edit_original_response(
+                content=f"✅ **Carte du monde de Legacy installée.** Il restera fixe dans {interaction.channel.mention}.\n"
+                        "Les joueurs peuvent maintenant naviguer chacun dans leur propre interface privée."
+            ),
+            timeout=10.0,
+        )
+    except asyncio.TimeoutError:
+        print("[LEGACY /legacy] ERREUR : timeout pendant la publication du Hub.")
+        try:
+            await interaction.edit_original_response(
+                content="❌ **Le Hub Legacy n'a pas pu être publié : délai d'attente dépassé.**\n"
+                        "La commande a été arrêtée proprement au lieu de rester bloquée. "
+                        "Consulte les logs du conteneur pour identifier l'étape qui ne répond pas."
+            )
+        except (discord.HTTPException, discord.NotFound):
+            pass
+    except Exception as exc:
+        print(f"[LEGACY /legacy] ERREUR publication Hub : {type(exc).__name__}: {exc}")
+        try:
+            await interaction.edit_original_response(
+                content=f"❌ **Impossible d'installer le Hub Legacy.**\n"
+                        f"Erreur : `{type(exc).__name__}: {str(exc)[:700]}`"
+            )
+        except (discord.HTTPException, discord.NotFound):
+            pass
 
 @legacy.error
 async def legacy_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
