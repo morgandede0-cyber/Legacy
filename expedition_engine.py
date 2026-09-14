@@ -73,53 +73,97 @@ RESOURCE_SELL_PRICES = {
 
 
 # =========================
-# EXPÉDITIONS
+# EXPÉDITIONS V1.66 — ELYNDOR
 # =========================
 
-EXPEDITIONS = {
-    "forest": {"name": "Forêt des Brumes", "emoji": "🌲", "level": 1, "duration": 15 * 60, "duration_label": "15 min", "danger": "Faible"},
-    "hills": {"name": "Collines Sauvages", "emoji": "⛰️", "level": 5, "duration": 30 * 60, "duration_label": "30 min", "danger": "Faible"},
-    "ruins": {"name": "Ruines Anciennes", "emoji": "🏛️", "level": 10, "duration": 60 * 60, "duration_label": "1 h", "danger": "Moyen"},
-    "swamp": {"name": "Marais Putrides", "emoji": "🐊", "level": 15, "duration": 2 * 60 * 60, "duration_label": "2 h", "danger": "Élevé"},
-    "desert": {"name": "Désert Aride", "emoji": "🏜️", "level": 20, "duration": 4 * 60 * 60, "duration_label": "4 h", "danger": "Élevé"},
-    "mountains": {"name": "Montagnes Glaciales", "emoji": "🏔️", "level": 25, "duration": 6 * 60 * 60, "duration_label": "6 h", "danger": "Extrême"},
+# Deux lieux d'exploration sont désormais accessibles depuis la carte du monde.
+# Les noms des 5 destinations internes restent volontairement génériques :
+# ils pourront être renommés plus tard sans migration de base de données.
+LOCATION_META = {
+    "elarwyn": {
+        "name": "Forêt d'Elarwyn",
+        "emoji": "🌲",
+        "description": "Une immense forêt d'Elyndor. On peut y couper du bois ou partir à la chasse.",
+        "activities": ("axe", "spear"),
+    },
+    "vorak": {
+        "name": "Mont Vorak",
+        "emoji": "🏔️",
+        "description": "Un massif rocheux d'Elyndor. On peut y miner ou partir à la chasse.",
+        "activities": ("pickaxe", "spear"),
+    },
 }
 
-# Entrée : (nom, niveau outil minimum, poids)
-# Le niveau de zone et le niveau d'outil travaillent ensemble : un bon outil ne crée pas
-# artificiellement un matériau rare dans une zone qui n'en contient pas.
+_DESTINATION_LEVELS = (1, 5, 10, 20, 30)
+_DESTINATION_DURATIONS = (1 * 3600, 2 * 3600, 4 * 3600, 6 * 3600, 8 * 3600)
+_DESTINATION_DANGER = ("Faible", "Modéré", "Sérieux", "Élevé", "Extrême")
+
+EXPEDITIONS = {}
+for _location_key, _location in LOCATION_META.items():
+    for _idx in range(1, 6):
+        _duration = _DESTINATION_DURATIONS[_idx - 1]
+        EXPEDITIONS[f"{_location_key}_{_idx}"] = {
+            "name": f"Destination {_idx}",
+            "location_key": _location_key,
+            "location_name": _location["name"],
+            "emoji": _location["emoji"],
+            "destination_index": _idx,
+            "level": _DESTINATION_LEVELS[_idx - 1],
+            "duration": _duration,
+            "duration_label": f"{_duration // 3600} h",
+            "danger": _DESTINATION_DANGER[_idx - 1],
+            "tools": _location["activities"],
+        }
+
+# Entrée : (nom, niveau d'outil minimum, poids).
+# Les ressources restent strictement les mêmes que dans l'ancien système.
+# Plus la destination est profonde, plus les ressources rares prennent de poids.
 LOOT_TABLES: Dict[str, Dict[str, List[Tuple[str, int, int]]]] = {
-    "forest": {
-        "pickaxe": [("Pierre brute", 1, 85), ("Minerai de fer", 2, 15)],
-        "axe": [("Bois de chêne", 1, 88), ("Bois de frêne", 2, 12)],
-        "spear": [("Viande de sanglier", 1, 55), ("Peau de sanglier", 1, 30), ("Défense de sanglier", 1, 10), ("Peau de loup", 2, 5)],
+    # ---------- FORÊT D'ELARWYN : BOIS + CHASSE ----------
+    "elarwyn_1": {
+        "axe": [("Bois de chêne", 1, 100)],
+        "spear": [("Viande de sanglier", 1, 58), ("Peau de sanglier", 1, 32), ("Défense de sanglier", 1, 10)],
     },
-    "hills": {
-        "pickaxe": [("Pierre brute", 1, 55), ("Minerai de fer", 2, 40), ("Minerai d'or", 3, 5)],
-        "axe": [("Bois de chêne", 1, 50), ("Bois de frêne", 2, 45), ("Bois d'ébène", 3, 5)],
-        "spear": [("Viande de sanglier", 1, 25), ("Peau de sanglier", 1, 18), ("Viande de loup", 2, 27), ("Peau de loup", 2, 22), ("Croc de loup", 2, 8)],
+    "elarwyn_2": {
+        "axe": [("Bois de chêne", 1, 65), ("Bois de frêne", 2, 35)],
+        "spear": [("Viande de sanglier", 1, 28), ("Peau de sanglier", 1, 18), ("Viande de loup", 2, 24), ("Peau de loup", 2, 22), ("Croc de loup", 2, 8)],
     },
-    "ruins": {
-        "pickaxe": [("Pierre brute", 1, 25), ("Minerai de fer", 2, 62), ("Minerai d'or", 3, 13)],
-        "axe": [("Bois de chêne", 1, 20), ("Bois de frêne", 2, 65), ("Bois d'ébène", 3, 15)],
-        "spear": [("Viande de loup", 2, 40), ("Peau de loup", 2, 42), ("Croc de loup", 2, 15), ("Peau d'ours", 3, 3)],
+    "elarwyn_3": {
+        "axe": [("Bois de chêne", 1, 20), ("Bois de frêne", 2, 62), ("Bois d'ébène", 3, 18)],
+        "spear": [("Viande de loup", 2, 30), ("Peau de loup", 2, 30), ("Croc de loup", 2, 10), ("Viande de crocodile", 2, 12), ("Peau de crocodile", 2, 13), ("Croc de crocodile", 2, 5)],
     },
-    "swamp": {
-        "pickaxe": [("Minerai de fer", 2, 48), ("Minerai d'or", 3, 45), ("Diamant brut", 4, 7)],
-        "axe": [("Bois de frêne", 2, 48), ("Bois d'ébène", 3, 46), ("Bois ancestral", 4, 6)],
-        "spear": [("Viande de crocodile", 2, 30), ("Peau de crocodile", 2, 30), ("Croc de crocodile", 2, 12), ("Peau d'ours", 3, 22), ("Griffe d'ours", 3, 6)],
+    "elarwyn_4": {
+        "axe": [("Bois de frêne", 2, 22), ("Bois d'ébène", 3, 60), ("Bois ancestral", 4, 18)],
+        "spear": [("Peau d'ours", 3, 54), ("Griffe d'ours", 3, 20), ("Peau de bête Alpha", 4, 14), ("Croc Alpha", 4, 8), ("Griffe Alpha", 4, 4)],
     },
-    "desert": {
-        "pickaxe": [("Minerai de fer", 2, 18), ("Minerai d'or", 3, 67), ("Diamant brut", 4, 15)],
-        "axe": [("Bois de frêne", 2, 18), ("Bois d'ébène", 3, 67), ("Bois ancestral", 4, 15)],
-        "spear": [("Peau d'ours", 3, 40), ("Griffe d'ours", 3, 18), ("Peau de félin du désert", 3, 24), ("Croc de félin du désert", 3, 14), ("Peau de bête Alpha", 4, 4)],
+    "elarwyn_5": {
+        "axe": [("Bois d'ébène", 3, 22), ("Bois ancestral", 4, 70), ("Cœur de bois ancien", 5, 8)],
+        "spear": [("Peau d'ours", 3, 18), ("Peau de bête Alpha", 4, 49), ("Croc Alpha", 4, 18), ("Griffe Alpha", 4, 10), ("Trophée légendaire", 5, 5)],
     },
-    "mountains": {
-        "pickaxe": [("Minerai d'or", 3, 38), ("Diamant brut", 4, 57), ("Cristal ancien", 5, 5)],
-        "axe": [("Bois d'ébène", 3, 34), ("Bois ancestral", 4, 61), ("Cœur de bois ancien", 5, 5)],
-        "spear": [("Peau d'ours", 3, 18), ("Peau de bête Alpha", 4, 54), ("Croc Alpha", 4, 18), ("Griffe Alpha", 4, 8), ("Trophée légendaire", 5, 2)],
+
+    # ---------- MONT VORAK : MINAGE + CHASSE ----------
+    "vorak_1": {
+        "pickaxe": [("Pierre brute", 1, 100)],
+        "spear": [("Viande de sanglier", 1, 55), ("Peau de sanglier", 1, 32), ("Défense de sanglier", 1, 13)],
+    },
+    "vorak_2": {
+        "pickaxe": [("Pierre brute", 1, 62), ("Minerai de fer", 2, 38)],
+        "spear": [("Viande de loup", 2, 42), ("Peau de loup", 2, 42), ("Croc de loup", 2, 16)],
+    },
+    "vorak_3": {
+        "pickaxe": [("Pierre brute", 1, 18), ("Minerai de fer", 2, 62), ("Minerai d'or", 3, 20)],
+        "spear": [("Peau d'ours", 3, 34), ("Griffe d'ours", 3, 14), ("Peau de félin du désert", 3, 34), ("Croc de félin du désert", 3, 18)],
+    },
+    "vorak_4": {
+        "pickaxe": [("Minerai de fer", 2, 22), ("Minerai d'or", 3, 60), ("Diamant brut", 4, 18)],
+        "spear": [("Peau d'ours", 3, 46), ("Griffe d'ours", 3, 20), ("Peau de bête Alpha", 4, 18), ("Croc Alpha", 4, 10), ("Griffe Alpha", 4, 6)],
+    },
+    "vorak_5": {
+        "pickaxe": [("Minerai d'or", 3, 22), ("Diamant brut", 4, 70), ("Cristal ancien", 5, 8)],
+        "spear": [("Peau d'ours", 3, 15), ("Peau de bête Alpha", 4, 50), ("Croc Alpha", 4, 19), ("Griffe Alpha", 4, 11), ("Trophée légendaire", 5, 5)],
     },
 }
+
 
 RARITY = {
     "Pierre brute": 1, "Bois de chêne": 1, "Viande de sanglier": 1, "Peau de sanglier": 2, "Défense de sanglier": 2,
@@ -360,7 +404,7 @@ class ExpeditionStore:
             """, (int(user_id),)).fetchone()
         return self._row_to_run(row) if row else None
 
-    def start(self, user_id: int, expedition_key: str, tool_key: str, bag_level: int | None = None, object1_key: str = "none", object2_key: str = "none") -> tuple[bool, str, ExpeditionRun | None]:
+    def start(self, user_id: int, expedition_key: str, tool_key: str, bag_level: int | None = None, tool_level: int | None = None, object1_key: str = "none", object2_key: str = "none") -> tuple[bool, str, ExpeditionRun | None]:
         uid = int(user_id)
         if expedition_key not in EXPEDITIONS or tool_key not in TOOL_META:
             return False, "Configuration d'expédition invalide.", None
@@ -383,7 +427,13 @@ class ExpeditionStore:
             return False, f"Niveau {zone['level']} requis pour {zone['name']}.", None
 
         gear = self.get_gear(uid)
-        tool_level = gear.tool_level(tool_key)
+        if tool_key not in zone.get("tools", ()):
+            return False, "Cet outil ne correspond pas à l'activité choisie dans cette destination.", None
+        unlocked_tool_level = gear.tool_level(tool_key)
+        selected_tool_level = unlocked_tool_level if tool_level is None else int(tool_level)
+        if selected_tool_level < 1 or selected_tool_level > unlocked_tool_level or selected_tool_level not in TOOL_LEVELS:
+            return False, "Outil sélectionné invalide ou non débloqué.", None
+        tool_level = selected_tool_level
         selected_bag_level = gear.bag_level if bag_level is None else int(bag_level)
         if selected_bag_level < 1 or selected_bag_level > gear.bag_level or selected_bag_level not in BAG_LEVELS:
             return False, "Sac sélectionné invalide ou non débloqué.", None
@@ -440,24 +490,54 @@ class ExpeditionStore:
             conn.commit()
         return True, "Expédition lancée.", run
 
-    def claim(self, user_id: int) -> tuple[bool, str, Dict[str, int]]:
-        uid = int(user_id)
+    def finalize_run(self, run_id: str) -> tuple[bool, str, Dict[str, int], ExpeditionRun | None]:
+        """Transfère automatiquement le butin à la fin d'une expédition.
+
+        Le passage claimed=0 -> 1 est atomique : même après un redémarrage du serveur,
+        un butin ne peut être crédité qu'une seule fois.
+        """
+        rid = str(run_id)
+        now = int(time.time())
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT * FROM expedition_runs WHERE user_id=? AND claimed=0 ORDER BY started_at DESC LIMIT 1", (uid,)).fetchone()
+            row = conn.execute("SELECT * FROM expedition_runs WHERE run_id=?", (rid,)).fetchone()
             if not row:
-                conn.rollback(); return False, "Aucune expédition à récupérer.", {}
-            if int(time.time()) < int(row["ends_at"]):
-                conn.rollback(); return False, "Cette expédition n'est pas encore terminée.", {}
-            loot = json.loads(row["loot_json"] or "{}")
+                conn.rollback()
+                return False, "Expédition introuvable.", {}, None
+            run = self._row_to_run(row)
+            if run.claimed:
+                conn.rollback()
+                return False, "Butin déjà transféré.", run.loot, run
+            if now < run.ends_at:
+                conn.rollback()
+                return False, "Cette expédition n'est pas encore terminée.", {}, run
+            loot = run.loot
             for name, qty in loot.items():
                 conn.execute("""
                     INSERT INTO resources(user_id, resource_name, quantity) VALUES (?,?,?)
                     ON CONFLICT(user_id, resource_name) DO UPDATE SET quantity=quantity+excluded.quantity
-                """, (uid, name, int(qty)))
-            conn.execute("UPDATE expedition_runs SET claimed=1 WHERE run_id=?", (row["run_id"],))
+                """, (run.user_id, name, int(qty)))
+            conn.execute(
+                "UPDATE expedition_drop_events SET revealed=1,revealed_at=COALESCE(revealed_at,?) WHERE run_id=?",
+                (now, rid),
+            )
+            conn.execute("UPDATE expedition_runs SET claimed=1 WHERE run_id=? AND claimed=0", (rid,))
             conn.commit()
-        return True, "Loots ajoutés à ton inventaire.", {str(k): int(v) for k,v in loot.items()}
+        final = self.run_by_id(rid)
+        return True, "Butin transféré automatiquement dans l'inventaire.", loot, final
+
+    def claim(self, user_id: int) -> tuple[bool, str, Dict[str, int]]:
+        """Compatibilité avec les anciennes interfaces : la V1.66 transfère automatiquement."""
+        uid = int(user_id)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM expedition_runs WHERE user_id=? AND claimed=0 ORDER BY started_at DESC LIMIT 1",
+                (uid,),
+            ).fetchone()
+        if not row:
+            return False, "Aucune expédition à récupérer.", {}
+        ok, msg, loot, _ = self.finalize_run(str(row["run_id"]))
+        return ok, msg, loot
 
     def upgrade(self, user_id: int, equipment: str) -> tuple[bool, str]:
         """Forge atomique : revérifie niveau, ownership, Gold et ressources au clic."""
@@ -571,7 +651,7 @@ class ExpeditionStore:
 
 
 def generate_loot(expedition_key: str, tool_key: str, tool_level: int, capacity: int) -> Dict[str, int]:
-    table = [entry for entry in LOOT_TABLES[expedition_key][tool_key] if tool_level >= entry[1]]
+    table = [entry for entry in LOOT_TABLES.get(expedition_key, {}).get(tool_key, []) if tool_level >= entry[1]]
     if not table:
         return {}
     names = [x[0] for x in table]

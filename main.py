@@ -9,7 +9,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 from economy import Economy
 from arena_engine import ArenaStore, BattleState, Fighter, CLASSES, CHAMPION_PROFILES, class_line, choose_first, resolve_action, bot_choose_action
-from expedition_engine import ExpeditionStore, EXPEDITIONS, TOOL_META, TOOL_LEVELS, BAG_LEVELS, UPGRADE_RECIPES, BAG_UPGRADE_RECIPES, STARTER_GEAR, RESOURCE_SELL_PRICES, EXPEDITION_OBJECTS, RARITY, RARITY_EMOJI, format_duration, loot_lines
+from expedition_engine import ExpeditionStore, EXPEDITIONS, LOCATION_META, TOOL_META, TOOL_LEVELS, BAG_LEVELS, UPGRADE_RECIPES, BAG_UPGRADE_RECIPES, STARTER_GEAR, RESOURCE_SELL_PRICES, EXPEDITION_OBJECTS, RARITY, RARITY_EMOJI, format_duration, loot_lines
 from dark_alley import (DarkAlleyStore, HEIST_ATTEMPTS, HEIST_CODE_LENGTH, GUARD_ENTRY_FEE,
                         INVITATION_ITEM, ACTION_COOLDOWN, ALLEY_BAN_SECONDS, short_time)
 from casino_engine import (CasinoStore, MAX_BET, VIP_MAX_BET, MIN_BET, SLOT_SYMBOLS, draw_slot, slot_multiplier, roulette_spin)
@@ -24,6 +24,7 @@ from tavern_render import render_dice, render_coin, render_rps
 from story_engine import StoryStore, SEASON_1_CHAPTERS, SEASON_1_TITLES, SEASON_1_TEXTS, STORY_REQUIREMENTS, ALL_STORY_ITEMS, STORY_ITEM_PRICES
 from gazette_engine import GazetteStore
 from expedition_render import render_expedition_live_card
+from job_board_engine import JobBoardStore, RARITIES as JOB_RARITIES
 import legacy_world_forge as WORLD_FORGE
 import tower_engine as TOWER
 
@@ -48,6 +49,7 @@ ADMIN_STORE = AdminStore(DATA / "legacy.sqlite3")
 TAVERN_STORE = TavernGameStore(DATA / "legacy.sqlite3")
 STORY_STORE = StoryStore(DATA / "legacy.sqlite3")
 GAZETTE_STORE = GazetteStore(DATA / "legacy.sqlite3")
+JOB_BOARD_STORE = JobBoardStore(DATA / "legacy.sqlite3")
 RECOVERED_CASINO_GAMES = CASINO_STORE.recover_unfinished()
 RECOVERED_ARENA_BATTLES = ARENA_STORE.recover_unfinished()
 RECOVERED_TAVERN_GAMES = TAVERN_STORE.recover_unfinished()
@@ -60,7 +62,7 @@ DESTINATIONS = {
     "tavern":      {"label":"Taverne",         "emoji":"🍺", "image":"tavern.png",      "transition":"to_tavern.gif"},
     "bank":        {"label":"Banque",          "emoji":"🏦", "image":"bank.png",        "transition":"to_bank.gif"},
     "arena":       {"label":"Arène",           "emoji":"⚔️", "image":"arena.png",       "transition":"to_arena.gif"},
-    "expeditions": {"label":"Expéditions",     "emoji":"🧭", "image":"expeditions.png", "transition":"to_expeditions.gif"},
+    "expeditions": {"label":"Petites annonces", "emoji":"📌", "image":"expeditions.png", "transition":"to_expeditions.gif"},
     "alley":       {"label":"Ruelle sombre",   "emoji":"🌑", "image":"alley.png",       "transition":"to_alley.gif"},
     "castle":      {"label":"Château",         "emoji":"🏰", "image":"castle.png",      "transition":"to_castle.gif"},
 }
@@ -237,9 +239,11 @@ class WorldHubView(discord.ui.View):
     """Carte du monde publique : chaque destination ouvre une session privée au joueur."""
     def __init__(self):
         super().__init__(timeout=None)
-        legacy_btn = discord.ui.Button(label="Altherya", emoji="👑", style=discord.ButtonStyle.primary, custom_id="legacy:world:city")
-        forge_btn = discord.ui.Button(label="La Forge de KHAZ\'GORAM", emoji="⚒️", style=discord.ButtonStyle.secondary, custom_id="legacy:world:khaz")
-        tower_btn = discord.ui.Button(label="La Tour d’Ashkar", emoji="🗼", style=discord.ButtonStyle.danger, custom_id="legacy:world:ashkar")
+        legacy_btn = discord.ui.Button(label="Altherya", emoji="👑", style=discord.ButtonStyle.primary, custom_id="legacy:world:city", row=0)
+        forge_btn = discord.ui.Button(label="La Forge de KHAZ'GORAM", emoji="⚒️", style=discord.ButtonStyle.secondary, custom_id="legacy:world:khaz", row=0)
+        tower_btn = discord.ui.Button(label="La Tour d’Ashkar", emoji="🗼", style=discord.ButtonStyle.danger, custom_id="legacy:world:ashkar", row=0)
+        forest_btn = discord.ui.Button(label="Forêt d'Elarwyn", emoji="🌲", style=discord.ButtonStyle.success, custom_id="altherya:world:elarwyn", row=1)
+        mountain_btn = discord.ui.Button(label="Mont Vorak", emoji="🏔️", style=discord.ButtonStyle.secondary, custom_id="altherya:world:vorak", row=1)
 
         async def legacy_cb(interaction: discord.Interaction):
             file = discord.File(PLACES / "hub.png", filename="legacy.png")
@@ -268,10 +272,19 @@ class WorldHubView(discord.ui.View):
         async def tower_cb(interaction: discord.Interaction):
             await TOWER.show_lobby(interaction)
 
+        async def forest_cb(interaction: discord.Interaction):
+            await open_exploration_location(interaction, "elarwyn")
+
+        async def mountain_cb(interaction: discord.Interaction):
+            await open_exploration_location(interaction, "vorak")
+
         legacy_btn.callback = legacy_cb
         forge_btn.callback = forge_cb
         tower_btn.callback = tower_cb
+        forest_btn.callback = forest_cb
+        mountain_btn.callback = mountain_cb
         self.add_item(legacy_btn); self.add_item(forge_btn); self.add_item(tower_btn)
+        self.add_item(forest_btn); self.add_item(mountain_btn)
 
 class HubView(discord.ui.View):
     def __init__(self):
@@ -2777,143 +2790,543 @@ def forge_upgrade_content(user_id:int,key:str)->str:
 # =========================
 
 
-def expedition_home_content(user_id: int) -> str:
-    level = EXPEDITION_STORE.get_player_level(user_id)
-    gear = EXPEDITION_STORE.get_gear(user_id)
-    active = EXPEDITION_STORE.active_run(user_id)
-    if active:
-        zone = EXPEDITIONS[active.expedition_key]
-        tool = TOOL_META[active.tool_key]
-        status = "✅ **Terminée — loots disponibles !**" if active.finished else f"⏳ **En cours — {format_duration(active.remaining_seconds)} restantes**"
-        return (
-            "🧭 **Tableau des Expéditions de Altherya**\n"
-            f"Niveau joueur : **{level}**\n\n"
-            f"{zone['emoji']} **{zone['name']}** — {status}\n"
-            f"{tool['emoji']} {TOOL_LEVELS[active.tool_level][active.tool_key]} • "
-            f"🎒 {BAG_LEVELS[active.bag_level]['name']} ({active.capacity} places)\n\n"
-            "Une seule expédition peut être active à la fois."
+def expedition_home_content(user_id: int, notice: str | None = None) -> str:
+    """Panneau des petites annonces installé à la place de l'ancien tableau d'expédition."""
+    state = JOB_BOARD_STORE.get_board(user_id)
+    lines = [
+        "📌 **PANNEAU DES PETITES ANNONCES D'ALTHERYA**",
+        "",
+        "Choisis **un seul petit boulot** parmi les 5 propositions.",
+        "Une fois une annonce acceptée, tout le panneau est retiré et sera renouvelé **1 heure plus tard**.",
+    ]
+
+    if notice:
+        lines.extend(["", notice])
+
+    if state.cooling_down:
+        lines.extend([
+            "",
+            "⏳ **Le panneau est en cours de renouvellement.**",
+            f"📜 Nouvelles annonces <t:{state.next_board_at}:R> • <t:{state.next_board_at}:t>",
+            "",
+            "Les 4 autres annonces du précédent tirage ont été retirées.",
+        ])
+        return "\n".join(lines)
+
+    if not state.jobs:
+        lines.extend(["", "🔄 Les nouvelles annonces sont en préparation. Appuie sur **Actualiser**."])
+        return "\n".join(lines)
+
+    lines.extend(["", "**ANNONCES DISPONIBLES**", ""])
+    for index, job in enumerate(state.jobs, start=1):
+        rarity = JOB_RARITIES[job.rarity]
+        lines.append(
+            f"**{index}. {job.title}**\n"
+            f"{rarity['emoji']} {rarity['label']} • 💰 **{job.reward} Gold**"
         )
-    return (
-        "🧭 **Tableau des Expéditions de Altherya**\n"
-        f"Niveau joueur : **{level}**\n\n"
-        "Configure ton équipement et ta destination avant de partir.\n"
-        f"⛏️ Pioche Niv.{gear.pickaxe_level} • 🪓 Hache Niv.{gear.axe_level} • 🗡️ Lance Niv.{gear.spear_level}\n"
-        f"🎒 {BAG_LEVELS[gear.bag_level]['name']} — **{BAG_LEVELS[gear.bag_level]['capacity']} loots max**\n\n"
-        "Cases 3 et 4 : **réservées aux futurs accessoires d'expédition**."
-    )
+        if index != len(state.jobs):
+            lines.append("")
+
+    lines.extend([
+        "",
+        "🎲 Chaque annonce tire sa rareté **indépendamment** : il peut donc y avoir plusieurs légendaires... ou uniquement du commun.",
+    ])
+    return "\n".join(lines)
 
 
 class ExpeditionView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        configure = discord.ui.Button(label="Configurer", emoji="⚙️", style=discord.ButtonStyle.primary,
-                                      custom_id="legacy:expedition:configure")
-        status = discord.ui.Button(label="Expédition / Loots", emoji="🎒", style=discord.ButtonStyle.success,
-                                   custom_id="legacy:expedition:status")
-        inventory = discord.ui.Button(label="Ressources", emoji="📦", style=discord.ButtonStyle.secondary,
-                                      custom_id="legacy:expedition:resources")
-        back = discord.ui.Button(label="Revenir en ville", emoji="🏙️", style=discord.ButtonStyle.secondary,
-                                 custom_id="legacy:expedition:back")
+    """V1.65 : l'ancien tableau des expéditions devient le panneau de petites annonces."""
+    def __init__(self, owner_id: int | None = None):
+        super().__init__(timeout=1800)
+        self.owner_id = int(owner_id) if owner_id is not None else None
+        self.state = JOB_BOARD_STORE.get_board(self.owner_id) if self.owner_id is not None else None
 
-        async def configure_cb(interaction: discord.Interaction):
+        if self.state is not None and not self.state.cooling_down:
+            for index, job in enumerate(self.state.jobs[:5], start=1):
+                button = discord.ui.Button(
+                    label=f"Annonce {index}",
+                    emoji="📜",
+                    style=discord.ButtonStyle.success if job.rarity in {"epic", "legendary"} else discord.ButtonStyle.primary,
+                    row=0 if index <= 3 else 1,
+                    custom_id=f"altherya:jobs:accept:{index}:{job.job_id}",
+                )
+
+                async def accept_cb(interaction: discord.Interaction, selected_job=job, selected_batch=self.state.batch_id):
+                    if self.owner_id is not None and interaction.user.id != self.owner_id:
+                        await interaction.response.send_message("Ce panneau appartient à un autre joueur.", ephemeral=True)
+                        return
+                    await safe_defer(interaction)
+                    ok, msg, accepted, _ = JOB_BOARD_STORE.accept_job(
+                        interaction.user.id,
+                        selected_batch,
+                        selected_job.job_id,
+                    )
+                    if not ok or accepted is None:
+                        await edit_with_asset(
+                            interaction,
+                            PLACES / "expeditions.png",
+                            "expeditions.png",
+                            ExpeditionView(interaction.user.id),
+                            expedition_home_content(interaction.user.id, f"❌ **{msg}**"),
+                        )
+                        return
+
+                    await announce_gold_activity(
+                        interaction.guild,
+                        interaction.user,
+                        accepted.reward,
+                        f"Petite annonce — {accepted.title}",
+                        details=f"Rareté : {JOB_RARITIES[accepted.rarity]['label']}",
+                        public=False,
+                    )
+                    rarity = JOB_RARITIES[accepted.rarity]
+                    notice = (
+                        f"✅ **Petit boulot accepté : {accepted.title}**\n"
+                        f"{rarity['emoji']} {rarity['label']} • 💰 **+{accepted.reward} Gold** ajoutés à ton portefeuille."
+                    )
+                    await edit_with_asset(
+                        interaction,
+                        PLACES / "expeditions.png",
+                        "expeditions.png",
+                        ExpeditionView(interaction.user.id),
+                        expedition_home_content(interaction.user.id, notice),
+                    )
+
+                button.callback = accept_cb
+                self.add_item(button)
+
+        refresh = discord.ui.Button(
+            label="Actualiser",
+            emoji="🔄",
+            style=discord.ButtonStyle.secondary,
+            row=2,
+            custom_id="altherya:jobs:refresh",
+        )
+        back = discord.ui.Button(
+            label="Revenir en ville",
+            emoji="🏙️",
+            style=discord.ButtonStyle.secondary,
+            row=2,
+            custom_id="altherya:jobs:back",
+        )
+
+        async def refresh_cb(interaction: discord.Interaction):
+            if self.owner_id is not None and interaction.user.id != self.owner_id:
+                await interaction.response.send_message("Ce panneau appartient à un autre joueur.", ephemeral=True)
+                return
             await safe_defer(interaction)
-            active = EXPEDITION_STORE.active_run(interaction.user.id)
-            if active:
-                await interaction.followup.send("❌ Termine ou récupère d'abord ton expédition actuelle.", ephemeral=True)
-                return
-            view = ExpeditionConfigView(interaction.user.id)
-            await edit_with_asset(interaction, PLACES / "expeditions.png", "expeditions.png", view, expedition_config_content(view))
-
-        async def status_cb(interaction: discord.Interaction):
-            active = EXPEDITION_STORE.active_run(interaction.user.id)
-            if not active:
-                await interaction.response.send_message("🧭 Tu n'as aucune expédition en cours.", ephemeral=True)
-                return
-            if active.finished:
-                await interaction.response.defer()
-                await edit_with_asset(interaction, PLACES / "expeditions.png", "expeditions.png",
-                                      ExpeditionClaimView(interaction.user.id), expedition_home_content(interaction.user.id))
-            else:
-                await interaction.response.send_message(expedition_live_content(active), ephemeral=True)
-
-        async def inventory_cb(interaction: discord.Interaction):
-            inv = EXPEDITION_STORE.get_resources(interaction.user.id)
-            if not inv:
-                text = "📦 **Ressources**\nTon inventaire de récolte est vide."
-            else:
-                lines = [f"• **{name}** ×{qty}" for name, qty in sorted(inv.items())]
-                text = "📦 **Ressources récoltées**\n" + "\n".join(lines[:35])
-                if len(lines) > 35:
-                    text += f"\n… et {len(lines)-35} autre(s)."
-            await interaction.response.send_message(text, ephemeral=True)
+            await edit_with_asset(
+                interaction,
+                PLACES / "expeditions.png",
+                "expeditions.png",
+                ExpeditionView(interaction.user.id),
+                expedition_home_content(interaction.user.id),
+            )
 
         async def back_cb(interaction: discord.Interaction):
+            if self.owner_id is not None and interaction.user.id != self.owner_id:
+                await interaction.response.send_message("Ce panneau appartient à un autre joueur.", ephemeral=True)
+                return
             await return_to_hub(interaction)
 
-        configure.callback = configure_cb
-        status.callback = status_cb
-        inventory.callback = inventory_cb
+        refresh.callback = refresh_cb
         back.callback = back_cb
-        self.add_item(configure); self.add_item(status); self.add_item(inventory); self.add_item(back)
+        self.add_item(refresh)
+        self.add_item(back)
+
+
+# ============================================================
+# V1.66 — EXPLORATION D'ELYNDOR : ELARWYN / VORAK
+# ============================================================
+
+def _activity_label(tool_key: str) -> str:
+    return {
+        "axe": "Couper du bois",
+        "pickaxe": "Miner",
+        "spear": "Chasser",
+    }.get(tool_key, tool_key)
+
+
+def _activity_emoji(tool_key: str) -> str:
+    return TOOL_META.get(tool_key, {}).get("emoji", "🧭")
+
+
+def _destination_keys(location_key: str) -> tuple[str, ...]:
+    return tuple(
+        key for key, meta in EXPEDITIONS.items()
+        if meta.get("location_key") == location_key
+    )
+
+
+def _zone_asset() -> Path:
+    # On réutilise pour le moment l'illustration du tableau d'expédition.
+    # Les images propres à Elarwyn/Vorak pourront être ajoutées plus tard sans changer le gameplay.
+    return PLACES / "expeditions.png"
+
+
+def location_home_content(user_id: int, location_key: str, notice: str | None = None) -> str:
+    meta = LOCATION_META[location_key]
+    active = EXPEDITION_STORE.active_run(user_id)
+    level = EXPEDITION_STORE.get_player_level(user_id)
+    lines = [
+        f"{meta['emoji']} **{meta['name'].upper()}**",
+        meta["description"],
+        "",
+        f"🎚️ Ton niveau : **{level}**",
+    ]
+    if notice:
+        lines.extend(["", notice])
+
+    if active:
+        zone = EXPEDITIONS.get(active.expedition_key, {})
+        active_location = zone.get("location_key")
+        if active_location == location_key:
+            EXPEDITION_STORE.reveal_due_events(active.run_id)
+            lines.extend(["", expedition_live_content(active, compact=True)])
+        else:
+            other = LOCATION_META.get(active_location, {}).get("name", "une autre zone")
+            lines.extend([
+                "",
+                f"🔒 Tu as déjà une expédition en cours dans **{other}**.",
+                "Une seule activité peut être menée à la fois.",
+            ])
+        return "\n".join(lines)
+
+    lines.extend([
+        "",
+        "### 🗺️ DESTINATIONS",
+        "Choisis l'une des **5 destinations**. Les zones plus profondes durent plus longtemps et donnent accès à des loots plus rares.",
+        "",
+    ])
+    for key in _destination_keys(location_key):
+        zone = EXPEDITIONS[key]
+        lock = "✅" if level >= zone["level"] else "🔒"
+        lines.append(
+            f"{lock} **{zone['name']}** • Niveau **{zone['level']}** • ⏳ **{zone['duration_label']}** • ☠️ {zone['danger']}"
+        )
+    return "\n".join(lines)
+
+
+class ExplorationLocationView(discord.ui.View):
+    def __init__(self, owner_id: int, location_key: str):
+        super().__init__(timeout=1800)
+        self.owner_id = int(owner_id)
+        self.location_key = location_key
+        level = EXPEDITION_STORE.get_player_level(owner_id)
+        active = EXPEDITION_STORE.active_run(owner_id)
+
+        if not active:
+            for idx, key in enumerate(_destination_keys(location_key), start=1):
+                zone = EXPEDITIONS[key]
+                unlocked = level >= zone["level"]
+                button = discord.ui.Button(
+                    label=f"Destination {idx}",
+                    emoji="🗺️" if unlocked else "🔒",
+                    style=discord.ButtonStyle.primary if unlocked else discord.ButtonStyle.secondary,
+                    disabled=not unlocked,
+                    row=0 if idx <= 3 else 1,
+                    custom_id=f"altherya:explore:{location_key}:dest:{idx}",
+                )
+
+                async def destination_cb(interaction: discord.Interaction, expedition_key=key):
+                    if interaction.user.id != self.owner_id:
+                        await interaction.response.send_message("Cette interface appartient à un autre joueur.", ephemeral=True)
+                        return
+                    zone_now = EXPEDITIONS[expedition_key]
+                    player_level = EXPEDITION_STORE.get_player_level(self.owner_id)
+                    if player_level < zone_now["level"]:
+                        await interaction.response.send_message(
+                            f"🔒 Niveau **{zone_now['level']}** requis. Ton niveau : **{player_level}**.",
+                            ephemeral=True,
+                        )
+                        return
+                    await interaction.response.edit_message(
+                        content=activity_content(expedition_key),
+                        view=ExpeditionActivityView(self.owner_id, expedition_key),
+                    )
+
+                button.callback = destination_cb
+                self.add_item(button)
+
+        refresh = discord.ui.Button(label="Actualiser", emoji="🔄", style=discord.ButtonStyle.secondary, row=2)
+        world = discord.ui.Button(label="Monde", emoji="🌍", style=discord.ButtonStyle.secondary, row=2)
+
+        async def refresh_cb(interaction: discord.Interaction):
+            if interaction.user.id != self.owner_id:
+                await interaction.response.send_message("Cette interface appartient à un autre joueur.", ephemeral=True)
+                return
+            active_now = EXPEDITION_STORE.active_run(self.owner_id)
+            if active_now and active_now.finished:
+                await finalize_expedition_run(active_now.run_id)
+            await interaction.response.edit_message(
+                content=location_home_content(self.owner_id, self.location_key),
+                view=ExplorationLocationView(self.owner_id, self.location_key),
+            )
+
+        async def world_cb(interaction: discord.Interaction):
+            if interaction.user.id != self.owner_id:
+                await interaction.response.send_message("Cette interface appartient à un autre joueur.", ephemeral=True)
+                return
+            file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
+            embed = discord.Embed(
+                title="🌍 Le Monde d'Elyndor",
+                description="Explore **Altherya**, **KHAZ'GORAM**, **la Tour d’Ashkar**, la **Forêt d’Elarwyn** et le **Mont Vorak**.",
+                color=0xB67A2A,
+            )
+            embed.set_image(url="attachment://elyndor_map.png")
+            await interaction.response.edit_message(content=None, embed=embed, attachments=[file], view=WorldHubView())
+
+        refresh.callback = refresh_cb
+        world.callback = world_cb
+        self.add_item(refresh)
+        self.add_item(world)
+
+
+def activity_content(expedition_key: str) -> str:
+    zone = EXPEDITIONS[expedition_key]
+    location = LOCATION_META[zone["location_key"]]
+    activities = " • ".join(f"{_activity_emoji(k)} **{_activity_label(k)}**" for k in zone["tools"])
+    return (
+        f"{location['emoji']} **{location['name']} — {zone['name']}**\n\n"
+        f"⏳ Durée : **{zone['duration_label']}**\n"
+        f"🎚️ Niveau requis : **{zone['level']}**\n"
+        f"☠️ Danger : **{zone['danger']}**\n\n"
+        "### 🎯 CHOISIS TON ACTIVITÉ\n"
+        f"{activities}\n\n"
+        "⚠️ **Une expédition = une seule activité.** Une fois lancée, tu ne pourras pas changer d'activité avant la fin."
+    )
+
+
+class ExpeditionActivityView(discord.ui.View):
+    def __init__(self, owner_id: int, expedition_key: str):
+        super().__init__(timeout=900)
+        self.owner_id = int(owner_id)
+        self.expedition_key = expedition_key
+        zone = EXPEDITIONS[expedition_key]
+        owned = EXPEDITION_STORE.owned_equipment(owner_id)
+
+        for tool_key in zone["tools"]:
+            have = bool(owned.get(tool_key, False))
+            button = discord.ui.Button(
+                label=_activity_label(tool_key),
+                emoji=_activity_emoji(tool_key),
+                style=discord.ButtonStyle.primary if have else discord.ButtonStyle.secondary,
+                disabled=not have,
+                row=0,
+            )
+
+            async def activity_cb(interaction: discord.Interaction, selected_tool=tool_key):
+                if interaction.user.id != self.owner_id:
+                    await interaction.response.send_message("Cette interface appartient à un autre joueur.", ephemeral=True)
+                    return
+                prep = ExpeditionPreparationView(self.owner_id, self.expedition_key, selected_tool)
+                await interaction.response.edit_message(content=preparation_content(prep), view=prep)
+
+            button.callback = activity_cb
+            self.add_item(button)
+
+        back = discord.ui.Button(label="Retour aux destinations", emoji="↩️", style=discord.ButtonStyle.secondary, row=1)
+        async def back_cb(interaction: discord.Interaction):
+            if interaction.user.id != self.owner_id:
+                await interaction.response.send_message("Cette interface appartient à un autre joueur.", ephemeral=True)
+                return
+            location_key = EXPEDITIONS[self.expedition_key]["location_key"]
+            await interaction.response.edit_message(
+                content=location_home_content(self.owner_id, location_key),
+                view=ExplorationLocationView(self.owner_id, location_key),
+            )
+        back.callback = back_cb
+        self.add_item(back)
+
+
+def preparation_content(view: "ExpeditionPreparationView") -> str:
+    zone = EXPEDITIONS[view.expedition_key]
+    location = LOCATION_META[zone["location_key"]]
+    gear = EXPEDITION_STORE.get_gear(view.owner_id)
+    owned = EXPEDITION_STORE.owned_equipment(view.owner_id)
+    tool_owned = owned.get(view.tool_key, False)
+    bag_owned = owned.get("bag", False)
+
+    if tool_owned:
+        tool_name = TOOL_LEVELS[view.tool_level][view.tool_key]
+        tool_line = f"{_activity_emoji(view.tool_key)} **{tool_name}** — niveau {view.tool_level}"
+    else:
+        tool_line = f"🔒 **{STARTER_GEAR[view.tool_key]['name']} non possédé**"
+
+    if bag_owned:
+        bag = BAG_LEVELS[view.bag_level]
+        bag_line = f"🎒 **{bag['name']}** — {bag['capacity']} places"
+    else:
+        bag_line = "🔒 **Aucune sacoche possédée**"
+
+    ready = tool_owned and bag_owned
+    return (
+        f"🎒 **PRÉPARATION DE L'EXPÉDITION**\n\n"
+        f"{location['emoji']} **{location['name']} — {zone['name']}**\n"
+        f"🎯 Activité : **{_activity_label(view.tool_key)}**\n"
+        f"⏳ Durée : **{zone['duration_label']}**\n\n"
+        "### 🔧 CARROUSEL OUTIL\n"
+        f"◀️  {tool_line}  ▶️\n"
+        f"*Versions débloquées : niveau 1 à {gear.tool_level(view.tool_key)}*\n\n"
+        "### 🎒 CARROUSEL SACOCHE\n"
+        f"◀️  {bag_line}  ▶️\n"
+        f"*Sacoches débloquées : niveau 1 à {gear.bag_level}*\n\n"
+        + ("✅ **Prêt à partir.**" if ready else "❌ **Outil et sacoche obligatoires pour lancer l'expédition.**")
+    )
+
+
+class ExpeditionPreparationView(discord.ui.View):
+    """Deux carrousels indépendants : outil + sacoche, puis lancement."""
+    def __init__(self, owner_id: int, expedition_key: str, tool_key: str):
+        super().__init__(timeout=900)
+        self.owner_id = int(owner_id)
+        self.expedition_key = expedition_key
+        self.tool_key = tool_key
+        gear = EXPEDITION_STORE.get_gear(owner_id)
+        self.tool_level = gear.tool_level(tool_key)
+        self.bag_level = gear.bag_level
+        self.rebuild()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Cette préparation appartient à un autre joueur.", ephemeral=True)
+            return False
+        return True
+
+    def rebuild(self):
+        self.clear_items()
+        gear = EXPEDITION_STORE.get_gear(self.owner_id)
+        owned = EXPEDITION_STORE.owned_equipment(self.owner_id)
+
+        tool_prev = discord.ui.Button(label="Outil", emoji="◀️", style=discord.ButtonStyle.secondary, row=0)
+        tool_next = discord.ui.Button(label="Outil", emoji="▶️", style=discord.ButtonStyle.secondary, row=0)
+        bag_prev = discord.ui.Button(label="Sacoche", emoji="◀️", style=discord.ButtonStyle.secondary, row=1)
+        bag_next = discord.ui.Button(label="Sacoche", emoji="▶️", style=discord.ButtonStyle.secondary, row=1)
+
+        tool_prev.disabled = tool_next.disabled = (not owned.get(self.tool_key, False) or gear.tool_level(self.tool_key) <= 1)
+        bag_prev.disabled = bag_next.disabled = (not owned.get("bag", False) or gear.bag_level <= 1)
+
+        async def tool_prev_cb(interaction: discord.Interaction):
+            max_level = gear.tool_level(self.tool_key)
+            self.tool_level = max_level if self.tool_level <= 1 else self.tool_level - 1
+            self.rebuild()
+            await interaction.response.edit_message(content=preparation_content(self), view=self)
+
+        async def tool_next_cb(interaction: discord.Interaction):
+            max_level = gear.tool_level(self.tool_key)
+            self.tool_level = 1 if self.tool_level >= max_level else self.tool_level + 1
+            self.rebuild()
+            await interaction.response.edit_message(content=preparation_content(self), view=self)
+
+        async def bag_prev_cb(interaction: discord.Interaction):
+            max_level = gear.bag_level
+            self.bag_level = max_level if self.bag_level <= 1 else self.bag_level - 1
+            self.rebuild()
+            await interaction.response.edit_message(content=preparation_content(self), view=self)
+
+        async def bag_next_cb(interaction: discord.Interaction):
+            max_level = gear.bag_level
+            self.bag_level = 1 if self.bag_level >= max_level else self.bag_level + 1
+            self.rebuild()
+            await interaction.response.edit_message(content=preparation_content(self), view=self)
+
+        tool_prev.callback = tool_prev_cb; tool_next.callback = tool_next_cb
+        bag_prev.callback = bag_prev_cb; bag_next.callback = bag_next_cb
+        self.add_item(tool_prev); self.add_item(tool_next); self.add_item(bag_prev); self.add_item(bag_next)
+
+        can_launch = owned.get(self.tool_key, False) and owned.get("bag", False)
+        launch = discord.ui.Button(
+            label="Lancer l'expédition",
+            emoji="🚩",
+            style=discord.ButtonStyle.success,
+            disabled=not can_launch,
+            row=2,
+        )
+        back = discord.ui.Button(label="Retour", emoji="↩️", style=discord.ButtonStyle.secondary, row=2)
+
+        async def launch_cb(interaction: discord.Interaction):
+            if EXPEDITION_STORE.active_run(self.owner_id):
+                await interaction.response.send_message("❌ Tu as déjà une expédition en cours.", ephemeral=True)
+                return
+            ok, msg, run = EXPEDITION_STORE.start(
+                self.owner_id,
+                self.expedition_key,
+                self.tool_key,
+                bag_level=self.bag_level,
+                tool_level=self.tool_level,
+            )
+            if not ok or run is None:
+                await interaction.response.send_message(f"❌ {msg}", ephemeral=True)
+                return
+
+            # On revient immédiatement au début du lieu, comme demandé.
+            location_key = EXPEDITIONS[self.expedition_key]["location_key"]
+            await interaction.response.edit_message(
+                content=location_home_content(self.owner_id, location_key, "🚩 **Expédition lancée !**"),
+                view=ExplorationLocationView(self.owner_id, location_key),
+            )
+
+            # Le suivi longue durée est un message serveur classique : contrairement à une
+            # réponse éphémère, Discord autorise sa mise à jour pendant 1 à 8 heures.
+            try:
+                status_message = await interaction.channel.send(
+                    content=expedition_live_content(run),
+                    view=ExpeditionLiveView(self.owner_id, run.run_id),
+                )
+                EXPEDITION_STORE.bind_status_message(run.run_id, status_message.channel.id, status_message.id)
+                start_expedition_monitor(run.run_id)
+            except (discord.Forbidden, discord.HTTPException, AttributeError) as exc:
+                print(f"[EXPEDITION V1.66] message de suivi impossible : {exc}")
+
+        async def back_cb(interaction: discord.Interaction):
+            await interaction.response.edit_message(
+                content=activity_content(self.expedition_key),
+                view=ExpeditionActivityView(self.owner_id, self.expedition_key),
+            )
+
+        launch.callback = launch_cb; back.callback = back_cb
+        self.add_item(launch); self.add_item(back)
 
 
 class ExpeditionLiveView(discord.ui.View):
-    """Vue persistante attachée au message public de suivi d'une expédition."""
+    """Suivi serveur d'une expédition longue durée."""
     def __init__(self, owner_id: int, run_id: str):
         super().__init__(timeout=None)
         self.owner_id = int(owner_id)
         self.run_id = str(run_id)
         run = EXPEDITION_STORE.run_by_id(self.run_id)
-
-        refresh = discord.ui.Button(
-            label="Actualiser", emoji="🔄", style=discord.ButtonStyle.secondary,
-            custom_id=f"legacy:expedition:live:refresh:{self.run_id}", row=0,
-        )
-        claim = discord.ui.Button(
-            label="Récupérer les loots", emoji="🎒", style=discord.ButtonStyle.success,
-            custom_id=f"legacy:expedition:live:claim:{self.run_id}", row=0,
-            disabled=bool(run is None or run.claimed or not run.finished),
-        )
-
-        async def refresh_cb(interaction: discord.Interaction):
-            if interaction.user.id != self.owner_id:
-                await interaction.response.send_message("Cette expédition appartient à un autre joueur.", ephemeral=True); return
-            await interaction.response.defer()
-            EXPEDITION_STORE.reveal_due_events(self.run_id)
-            await refresh_expedition_status(self.run_id)
-
-        async def claim_cb(interaction: discord.Interaction):
-            if interaction.user.id != self.owner_id:
-                await interaction.response.send_message("Ces loots appartiennent à un autre joueur.", ephemeral=True); return
-            await claim_expedition_from_live(interaction, self.run_id, self.owner_id)
-
-        refresh.callback = refresh_cb
-        claim.callback = claim_cb
-        self.add_item(refresh); self.add_item(claim)
+        if run and not run.claimed:
+            refresh = discord.ui.Button(
+                label="Actualiser", emoji="🔄", style=discord.ButtonStyle.secondary,
+                custom_id=f"altherya:expedition:live:refresh:{self.run_id}", row=0,
+            )
+            async def refresh_cb(interaction: discord.Interaction):
+                if interaction.user.id != self.owner_id:
+                    await interaction.response.send_message("Cette expédition appartient à un autre joueur.", ephemeral=True)
+                    return
+                await interaction.response.defer()
+                await refresh_expedition_status(self.run_id)
+            refresh.callback = refresh_cb
+            self.add_item(refresh)
 
 
-def _expedition_object_line(key: str | None) -> str:
-    obj = EXPEDITION_OBJECTS.get(key or "none", EXPEDITION_OBJECTS["none"])
-    return f"{obj['emoji']} **{obj['name']}**"
-
-
-def expedition_live_content(run) -> str:
+def expedition_live_content(run, compact: bool = False) -> str:
     zone = EXPEDITIONS[run.expedition_key]
+    location = LOCATION_META[zone["location_key"]]
     tool_name = TOOL_LEVELS[run.tool_level][run.tool_key]
     bag_name = BAG_LEVELS[run.bag_level]["name"]
-    revealed = EXPEDITION_STORE.revealed_loot(run.run_id)
+    revealed = run.loot if run.claimed else EXPEDITION_STORE.revealed_loot(run.run_id)
     total = sum(revealed.values())
-    logs = EXPEDITION_STORE.drop_log(run.run_id, limit=8)
+    logs = EXPEDITION_STORE.drop_log(run.run_id, limit=6 if compact else 10)
 
     if run.claimed:
-        status = "✅ **Butin récupéré**"
-        timer = "Terminée"
+        status = "✅ **EXPÉDITION TERMINÉE — OBJETS TRANSFÉRÉS DANS L'INVENTAIRE**"
+        timer = "00 min"
     elif run.finished:
-        status = "✅ **EXPÉDITION TERMINÉE — BUTIN DISPONIBLE**"
+        status = "⏳ **EXPÉDITION TERMINÉE — TRANSFERT EN COURS**"
         timer = "00 min"
     else:
         status = "🟢 **EXPÉDITION EN COURS**"
-        # Le message est réédité au minimum chaque minute par le moniteur.
         mins = max(1, (run.remaining_seconds + 59) // 60)
         h, m = divmod(mins, 60)
         timer = f"{h} h {m:02d} min" if h else f"{m} min"
@@ -2930,47 +3343,24 @@ def expedition_live_content(run) -> str:
     else:
         log_text = "*Aucun drop pour le moment…*"
 
-    progress = min(1.0, max(0.0, (int(datetime.now().timestamp()) - run.started_at) / max(1, run.ends_at - run.started_at)))
-    filled = 12 if run.finished else int(progress * 12)
+    if run.claimed:
+        filled = 12
+    else:
+        progress = min(1.0, max(0.0, (int(datetime.now().timestamp()) - run.started_at) / max(1, run.ends_at - run.started_at)))
+        filled = int(progress * 12)
     bar = "█" * filled + "░" * (12 - filled)
 
+    prefix = "" if compact else f"🧭 **EXPÉDITION DE <@{run.user_id}>**\n"
     return (
-        f"🧭 **EXPÉDITION DE <@{run.user_id}>**\n"
-        f"{status}\n\n"
-        f"{zone['emoji']} **{zone['name']}** • ☠️ {zone['danger']}\n"
-        f"{TOOL_META[run.tool_key]['emoji']} **{tool_name}**\n"
-        f"🎒 **{bag_name}** — capacité {run.capacity}\n"
-        f"3️⃣ Objet 1 : {_expedition_object_line(run.object1_key)}\n"
-        f"4️⃣ Objet 2 : {_expedition_object_line(run.object2_key)}\n\n"
+        f"{prefix}{status}\n\n"
+        f"{location['emoji']} **{location['name']} — {zone['name']}**\n"
+        f"🎯 **{_activity_label(run.tool_key)}**\n"
+        f"{_activity_emoji(run.tool_key)} **{tool_name}**\n"
+        f"🎒 **{bag_name}** — capacité {run.capacity}\n\n"
         f"⏳ **Temps restant : {timer}**\n"
         f"`{bar}`\n"
-        f"📦 **Items récoltés : {total}/{run.capacity}**\n\n"
-        f"📜 **LOGS DES DROPS**\n{log_text}\n\n"
-        "*Le timer est actualisé chaque minute. Les logs et le compteur sont actualisés immédiatement à chaque drop.*"
-    )
-
-
-def expedition_live_image_path(run) -> Path:
-    """Construit/retourne l'image fixe de l'expédition en cours."""
-    out = EXPEDITION_LIVE_ASSETS / f"{run.run_id}.png"
-    if out.exists():
-        return out
-    zone = EXPEDITIONS[run.expedition_key]
-    obj1 = EXPEDITION_OBJECTS.get(run.object1_key or "none", EXPEDITION_OBJECTS["none"])
-    obj2 = EXPEDITION_OBJECTS.get(run.object2_key or "none", EXPEDITION_OBJECTS["none"])
-    return render_expedition_live_card(
-        base_image=PLACES / "expeditions.png",
-        output_path=out,
-        expedition_key=run.expedition_key,
-        expedition_name=zone["name"],
-        duration_label=zone["duration_label"],
-        danger=zone["danger"],
-        tool_name=TOOL_LEVELS[run.tool_level][run.tool_key],
-        tool_level=run.tool_level,
-        bag_name=BAG_LEVELS[run.bag_level]["name"],
-        capacity=run.capacity,
-        object1_name=obj1["name"],
-        object2_name=obj2["name"],
+        f"📦 **Récolte : {total}/{run.capacity}**\n\n"
+        f"📜 **LOGS DE L'EXPÉDITION**\n{log_text}"
     )
 
 
@@ -2984,36 +3374,64 @@ async def _get_expedition_status_message(run):
         return None
 
 
+async def finalize_expedition_run(run_id: str) -> bool:
+    """Finalise une fois, crédite l'inventaire et les récompenses de progression."""
+    before = EXPEDITION_STORE.run_by_id(run_id)
+    ok, _, loot, final_run = EXPEDITION_STORE.finalize_run(run_id)
+    if not ok or final_run is None:
+        return False
+
+    # finalize_run n'est vrai que lors du premier transfert : XP/quête ne peuvent donc
+    # pas être doublés, même si Coolify redémarre exactement au moment de la fin.
+    CASTLE_STORE.record(final_run.user_id, "expedition")
+    CASTLE_STORE.add_xp(final_run.user_id, 20)
+
+    message = await _get_expedition_status_message(final_run)
+    if message:
+        try:
+            await message.edit(content=expedition_live_content(final_run), view=None)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+    return True
+
+
 async def refresh_expedition_status(run_id: str):
     run = EXPEDITION_STORE.run_by_id(run_id)
     if not run:
         return
+    if not run.claimed:
+        EXPEDITION_STORE.reveal_due_events(run_id)
+        run = EXPEDITION_STORE.run_by_id(run_id) or run
+        if run.finished:
+            await finalize_expedition_run(run_id)
+            run = EXPEDITION_STORE.run_by_id(run_id) or run
     message = await _get_expedition_status_message(run)
     if message is None:
         return
     try:
-        await message.edit(content=expedition_live_content(run), view=ExpeditionLiveView(run.user_id, run.run_id))
+        await message.edit(
+            content=expedition_live_content(run),
+            view=None if run.claimed else ExpeditionLiveView(run.user_id, run.run_id),
+        )
     except (discord.NotFound, discord.Forbidden, discord.HTTPException):
         pass
 
 
 async def monitor_expedition(run_id: str):
-    """Réveille l'interface à chaque drop et au minimum une fois par minute."""
+    """Actualise timer/logs, puis transfère automatiquement le butin à 00:00."""
     try:
         while True:
             run = EXPEDITION_STORE.run_by_id(run_id)
             if not run or run.claimed:
                 return
-
-            # Si un ou plusieurs drops sont arrivés pendant le sommeil, ils sont révélés
-            # puis le même message Discord est immédiatement édité.
             EXPEDITION_STORE.reveal_due_events(run_id)
             await refresh_expedition_status(run_id)
-
             run = EXPEDITION_STORE.run_by_id(run_id)
-            if not run or run.claimed or run.finished:
+            if not run or run.claimed:
                 return
-
+            if run.finished:
+                await finalize_expedition_run(run_id)
+                return
             now = int(datetime.now().timestamp())
             next_drop = EXPEDITION_STORE.next_drop_at(run_id)
             next_minute = now + 60
@@ -3022,9 +3440,9 @@ async def monitor_expedition(run_id: str):
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        print(f"[EXPEDITION] monitor {run_id} : {exc}")
+        print(f"[EXPEDITION V1.66] monitor {run_id} : {exc}")
     finally:
-        EXPEDITION_MONITORS.pop(run_id, None)
+        EXPEDITION_MONITORS.pop(str(run_id), None)
 
 
 def start_expedition_monitor(run_id: str):
@@ -3034,334 +3452,20 @@ def start_expedition_monitor(run_id: str):
     EXPEDITION_MONITORS[str(run_id)] = asyncio.create_task(monitor_expedition(str(run_id)))
 
 
-async def claim_expedition_from_live(interaction: discord.Interaction, run_id: str, owner_id: int):
-    run = EXPEDITION_STORE.run_by_id(run_id)
-    if not run or run.user_id != int(owner_id) or run.claimed:
-        await interaction.response.send_message("❌ Cette expédition n'est plus disponible.", ephemeral=True); return
-    if not run.finished:
-        await interaction.response.send_message(f"⏳ Encore **{format_duration(run.remaining_seconds)}** avant la fin.", ephemeral=True); return
-
-    await interaction.response.defer(ephemeral=True)
-    ok, msg, loot = EXPEDITION_STORE.claim(owner_id)
-    if not ok:
-        await interaction.followup.send(f"❌ {msg}", ephemeral=True); return
-    total = sum(loot.values())
-    CASTLE_STORE.record(owner_id, "expedition")
-    CASTLE_STORE.add_xp(owner_id, EXPEDITION_XP.get(run.expedition_key, 20))
-    exp_name = EXPEDITIONS.get(run.expedition_key, {}).get("name", run.expedition_key)
-    await announce_player_log(interaction.guild, interaction.user, f"Expédition terminée : {exp_name}", category="Expédition", details=f"Butin récupéré : {total} ressource(s)")
-
-    tracked = EXPEDITION_MONITORS.pop(run_id, None)
-    if tracked and not tracked.done():
-        tracked.cancel()
-    final_run = EXPEDITION_STORE.run_by_id(run_id)
-    message = await _get_expedition_status_message(final_run or run)
-    if message:
-        try:
-            await message.edit(
-                content=(
-                    f"🎒 **EXPÉDITION TERMINÉE — BUTIN RÉCUPÉRÉ PAR <@{owner_id}>**\n\n"
-                    f"{loot_lines(loot)}\n\n📦 Total : **{total} loot(s)**\n"
-                    "Les ressources ont été ajoutées à l'inventaire."
-                ),
-                view=None,
-            )
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            pass
-    await interaction.followup.send(f"✅ Butin récupéré : **{total} item(s)**.", ephemeral=True)
-    await show_pending_levelups(interaction, owner_id)
-
-
-class ExpeditionConfigView(discord.ui.View):
-    """Préparation simplifiée : 4 carrousels, puis lancement."""
-
-    TOOL_KEYS = tuple(TOOL_META.keys())
-    DESTINATION_KEYS = tuple(EXPEDITIONS.keys())
-    OBJECT_KEYS = tuple(EXPEDITION_OBJECTS.keys())
-
-    def __init__(self, owner_id: int):
-        super().__init__(timeout=600)
-        self.owner_id = int(owner_id)
-        self.stage = "tool"  # tool -> destination -> object1 -> object2 -> ready
-        self.tool_cursor = 0
-        self.destination_cursor = 0
-        self.object1_cursor = 0
-        self.object2_cursor = 0
-        self.tool_key: str | None = None
-        self.expedition_key: str | None = None
-        self.object1_key: str = "none"
-        self.object2_key: str = "none"
-        self.rebuild()
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Cette préparation appartient à un autre joueur.", ephemeral=True)
-            return False
-        return True
-
-    def _owned_tool_keys(self) -> tuple[str, ...]:
-        owned = EXPEDITION_STORE.owned_equipment(self.owner_id)
-        return tuple(key for key in self.TOOL_KEYS if owned.get(key, False))
-
-    def _current_object_key(self) -> str:
-        cursor = self.object1_cursor if self.stage == "object1" else self.object2_cursor
-        return self.OBJECT_KEYS[cursor % len(self.OBJECT_KEYS)]
-
-    def rebuild(self):
-        self.clear_items()
-
-        if self.stage in {"tool", "destination", "object1", "object2"}:
-            left = discord.ui.Button(label="Précédent", emoji="⬆️", style=discord.ButtonStyle.secondary, row=0)
-            select = discord.ui.Button(label="Sélectionner", emoji="✅", style=discord.ButtonStyle.primary, row=0)
-            right = discord.ui.Button(label="Suivant", emoji="⬇️", style=discord.ButtonStyle.secondary, row=0)
-
-            if self.stage == "tool":
-                available = self._owned_tool_keys()
-                left.disabled = right.disabled = len(available) <= 1
-                select.disabled = not available
-
-            async def left_cb(interaction: discord.Interaction):
-                self._move(-1); self.rebuild()
-                await interaction.response.edit_message(content=expedition_config_content(self), view=self)
-
-            async def right_cb(interaction: discord.Interaction):
-                self._move(+1); self.rebuild()
-                await interaction.response.edit_message(content=expedition_config_content(self), view=self)
-
-            async def select_cb(interaction: discord.Interaction):
-                ok, error = self._select_current()
-                if not ok:
-                    await interaction.response.send_message(error or "Sélection impossible.", ephemeral=True); return
-                self.rebuild()
-                await interaction.response.edit_message(content=expedition_config_content(self), view=self)
-
-            left.callback = left_cb; select.callback = select_cb; right.callback = right_cb
-            self.add_item(left); self.add_item(select); self.add_item(right)
-
-        elif self.stage == "ready":
-            launch = discord.ui.Button(label="Lancer l'expédition", emoji="🚩", style=discord.ButtonStyle.success, row=0)
-            modify = discord.ui.Button(label="Modifier", emoji="🛠️", style=discord.ButtonStyle.secondary, row=0)
-
-            async def launch_cb(interaction: discord.Interaction):
-                if not self.tool_key or not self.expedition_key:
-                    await interaction.response.send_message("❌ La préparation est incomplète.", ephemeral=True); return
-                if not EXPEDITION_STORE.has_equipment(self.owner_id, "bag"):
-                    await interaction.response.send_message("🔒 Tu dois acheter un sac au Marché avant de partir.", ephemeral=True); return
-                gear = EXPEDITION_STORE.get_gear(self.owner_id)
-                await interaction.response.defer()
-                ok, msg, run = EXPEDITION_STORE.start(
-                    self.owner_id, self.expedition_key, self.tool_key,
-                    bag_level=gear.bag_level,
-                    object1_key=self.object1_key,
-                    object2_key=self.object2_key,
-                )
-                if not ok:
-                    await interaction.followup.send(f"❌ {msg}", ephemeral=True); return
-
-                # L'interface privée reste dans le flux Altherya.
-                await edit_with_asset(
-                    interaction, PLACES / "expeditions.png", "expeditions.png", ExpeditionView(),
-                    "🚩 **Expédition lancée !**\n\nUn panneau de suivi vient d'être créé avec l'image de l'expédition. "
-                    "Le timer se met à jour chaque minute et chaque drop met immédiatement à jour le compteur et les logs.",
-                )
-
-                # Le suivi doit vivre plusieurs heures : on crée donc un vrai message Discord
-                # (les réponses éphémères ne peuvent pas être éditées de façon fiable aussi longtemps).
-                try:
-                    live_image = expedition_live_image_path(run)
-                    file = discord.File(live_image, filename="expedition_en_cours.png")
-                    status_message = await interaction.channel.send(
-                        content=expedition_live_content(run),
-                        file=file,
-                        view=ExpeditionLiveView(self.owner_id, run.run_id),
-                    )
-                    EXPEDITION_STORE.bind_status_message(run.run_id, status_message.channel.id, status_message.id)
-                    start_expedition_monitor(run.run_id)
-                except (discord.Forbidden, discord.HTTPException, AttributeError) as exc:
-                    print(f"[EXPEDITION] message de suivi impossible : {exc}")
-
-            async def modify_cb(interaction: discord.Interaction):
-                self.stage = "tool"
-                self.rebuild()
-                await interaction.response.edit_message(content=expedition_config_content(self), view=self)
-
-            launch.callback = launch_cb; modify.callback = modify_cb
-            self.add_item(launch); self.add_item(modify)
-
-        cancel = discord.ui.Button(label="Retour au tableau", emoji="🏕️", style=discord.ButtonStyle.secondary, row=1)
-        async def cancel_cb(interaction: discord.Interaction):
-            await safe_defer(interaction)
-            await edit_with_asset(interaction, PLACES / "expeditions.png", "expeditions.png", ExpeditionView(), expedition_home_content(self.owner_id))
-        cancel.callback = cancel_cb
-        self.add_item(cancel)
-
-    def _move(self, direction: int):
-        if self.stage == "tool":
-            available = self._owned_tool_keys()
-            if available:
-                self.tool_cursor = (self.tool_cursor + direction) % len(available)
-        elif self.stage == "destination":
-            self.destination_cursor = (self.destination_cursor + direction) % len(self.DESTINATION_KEYS)
-        elif self.stage == "object1":
-            self.object1_cursor = (self.object1_cursor + direction) % len(self.OBJECT_KEYS)
-        elif self.stage == "object2":
-            self.object2_cursor = (self.object2_cursor + direction) % len(self.OBJECT_KEYS)
-
-    def _select_current(self) -> tuple[bool, str | None]:
-        if self.stage == "tool":
-            available = self._owned_tool_keys()
-            if not available:
-                return False, "🔒 Achète d'abord une Pioche, une Hache ou une Lance au Marché."
-            self.tool_cursor %= len(available)
-            self.tool_key = available[self.tool_cursor]
-            self.stage = "destination"
-            return True, None
-
-        if self.stage == "destination":
-            key = self.DESTINATION_KEYS[self.destination_cursor]
-            zone = EXPEDITIONS[key]
-            level = EXPEDITION_STORE.get_player_level(self.owner_id)
-            if level < zone["level"]:
-                return False, f"🔒 {zone['name']} nécessite le niveau {zone['level']}. Ton niveau : {level}."
-            self.expedition_key = key
-            self.stage = "object1"
-            return True, None
-
-        if self.stage == "object1":
-            self.object1_key = self._current_object_key()
-            self.stage = "object2"
-            return True, None
-
-        if self.stage == "object2":
-            candidate = self._current_object_key()
-            if candidate != "none" and candidate == self.object1_key:
-                return False, "Choisis un objet différent pour le second emplacement, ou **Aucun objet**."
-            self.object2_key = candidate
-            self.stage = "ready"
-            return True, None
-
-        return False, "Étape invalide."
-
-
-def expedition_config_content(v: ExpeditionConfigView) -> str:
-    player_level = EXPEDITION_STORE.get_player_level(v.owner_id)
-    gear = EXPEDITION_STORE.get_gear(v.owner_id)
-
-    if v.stage == "tool":
-        available = v._owned_tool_keys()
-        if available:
-            v.tool_cursor %= len(available)
-            key = available[v.tool_cursor]
-            lvl = gear.tool_level(key)
-            focus = f"{TOOL_META[key]['emoji']} **{TOOL_LEVELS[lvl][key]}** — Niv.{lvl}"
-        else:
-            focus = "🔒 **Aucun outil acheté au Marché**"
-        return (
-            "🧭 **PRÉPARATION — MENU 1/4 : OUTIL**\n\n"
-            f"👉 {focus}\n\n"
-            "⬆️ / ⬇️ pour parcourir tes outils, puis ✅ **Sélectionner**."
-        )
-
-    if v.stage == "destination":
-        key = v.DESTINATION_KEYS[v.destination_cursor]
-        z = EXPEDITIONS[key]
-        lock = "✅ Accessible" if player_level >= z["level"] else f"🔒 Niveau {z['level']} requis"
-        return (
-            "🧭 **PRÉPARATION — MENU 2/4 : DESTINATION**\n\n"
-            f"👉 {z['emoji']} **{z['name']}**\n"
-            f"⏳ {z['duration_label']} • ☠️ {z['danger']}\n"
-            f"🎚️ Niveau requis : **{z['level']}** • {lock}\n\n"
-            "⬆️ / ⬇️ pour changer de destination, puis ✅ **Sélectionner**."
-        )
-
-    if v.stage in {"object1", "object2"}:
-        key = v._current_object_key()
-        obj = EXPEDITION_OBJECTS[key]
-        number = "3/4" if v.stage == "object1" else "4/4"
-        slot = "OBJET 1" if v.stage == "object1" else "OBJET 2"
-        previous = f"\nObjet 1 déjà choisi : {_expedition_object_line(v.object1_key)}" if v.stage == "object2" else ""
-        return (
-            f"🧭 **PRÉPARATION — MENU {number} : {slot}**\n\n"
-            f"👉 {obj['emoji']} **{obj['name']}**\n"
-            f"*{obj['description']}*{previous}\n\n"
-            "⬆️ / ⬇️ pour parcourir les objets, puis ✅ **Sélectionner**."
-        )
-
-    z = EXPEDITIONS[v.expedition_key]
-    tool_lvl = gear.tool_level(v.tool_key)
-    tool_name = TOOL_LEVELS[tool_lvl][v.tool_key]
-    bag = BAG_LEVELS[gear.bag_level]
-    return (
-        "🧭 **PRÉPARATION TERMINÉE**\n\n"
-        "### 📜 RÉCAPITULATIF\n"
-        f"1️⃣ {TOOL_META[v.tool_key]['emoji']} **{tool_name}**\n"
-        f"2️⃣ {z['emoji']} **{z['name']}** — {z['duration_label']}\n"
-        f"3️⃣ {_expedition_object_line(v.object1_key)}\n"
-        f"4️⃣ {_expedition_object_line(v.object2_key)}\n"
-        f"🎒 Sac automatique : **{bag['name']}** — {bag['capacity']} places\n\n"
-        "Tout est prêt. Appuie sur **🚩 Lancer l'expédition**."
+async def open_exploration_location(interaction: discord.Interaction, location_key: str):
+    if location_key not in LOCATION_META:
+        await interaction.response.send_message("Zone inconnue.", ephemeral=True)
+        return
+    active = EXPEDITION_STORE.active_run(interaction.user.id)
+    if active and active.finished:
+        await finalize_expedition_run(active.run_id)
+    file = discord.File(_zone_asset(), filename="exploration.png")
+    await interaction.response.send_message(
+        content=location_home_content(interaction.user.id, location_key),
+        file=file,
+        view=ExplorationLocationView(interaction.user.id, location_key),
+        ephemeral=True,
     )
-
-
-class ExpeditionClaimView(discord.ui.View):
-    def __init__(self, owner_id: int):
-        super().__init__(timeout=600)
-        self.owner_id = int(owner_id)
-        claim = discord.ui.Button(label="Récupérer les loots", emoji="🎒", style=discord.ButtonStyle.success)
-        back = discord.ui.Button(label="Retour au tableau", emoji="↩️", style=discord.ButtonStyle.secondary)
-
-        async def claim_cb(interaction: discord.Interaction):
-            if interaction.user.id != self.owner_id:
-                await interaction.response.send_message("Ces loots appartiennent à un autre joueur.", ephemeral=True); return
-            await interaction.response.defer()
-            active_before = EXPEDITION_STORE.active_run(self.owner_id)
-            ok, msg, loot = EXPEDITION_STORE.claim(self.owner_id)
-            if not ok:
-                await interaction.followup.send(f"❌ {msg}", ephemeral=True); return
-            total = sum(loot.values())
-            # XP et quête accordées seulement quand l'expédition est réellement terminée et réclamée.
-            CASTLE_STORE.record(self.owner_id, "expedition")
-            if active_before:
-                CASTLE_STORE.add_xp(self.owner_id, EXPEDITION_XP.get(active_before.expedition_key, 20))
-                exp_name = EXPEDITIONS.get(active_before.expedition_key, {}).get("name", active_before.expedition_key)
-            else:
-                exp_name = "Expédition"
-            await announce_player_log(interaction.guild, interaction.user, f"Expédition terminée : {exp_name}", category="Expédition", details=f"Butin récupéré : {total} ressource(s)")
-            text = (
-                "🎒 **EXPÉDITION TERMINÉE — BUTIN RÉCUPÉRÉ**\n\n"
-                f"{loot_lines(loot)}\n\n"
-                f"📦 Total : **{total} loot(s)**\n"
-                "Les ressources ont été ajoutées à ton inventaire."
-            )
-            if active_before:
-                task = EXPEDITION_MONITORS.pop(active_before.run_id, None)
-                if task and not task.done():
-                    task.cancel()
-                tracked = await _get_expedition_status_message(active_before)
-                if tracked:
-                    try:
-                        await tracked.edit(
-                            content=(
-                                f"🎒 **EXPÉDITION TERMINÉE — BUTIN RÉCUPÉRÉ PAR <@{self.owner_id}>**\n\n"
-                                f"{loot_lines(loot)}\n\n"
-                                f"📦 Total : **{total} loot(s)**\n"
-                                "Les ressources ont été ajoutées à l'inventaire."
-                            ),
-                            view=None,
-                        )
-                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                        pass
-            await edit_with_asset(interaction, PLACES / "expeditions.png", "expeditions.png", ExpeditionView(), text)
-            await show_pending_levelups(interaction, self.owner_id)
-
-        async def back_cb(interaction: discord.Interaction):
-            if interaction.user.id != self.owner_id:
-                await interaction.response.send_message("Cette interface appartient à un autre joueur.", ephemeral=True); return
-            await safe_defer(interaction)
-            await edit_with_asset(interaction, PLACES / "expeditions.png", "expeditions.png", ExpeditionView(), expedition_home_content(self.owner_id))
-
-        claim.callback = claim_cb; back.callback = back_cb
-        self.add_item(claim); self.add_item(back)
 
 
 # ============================================================
@@ -4689,7 +4793,7 @@ async def _open_place_after_scene(interaction: discord.Interaction, destination:
     data = DESTINATIONS[destination]
     view = (TavernView() if destination == "tavern" else MarketView() if destination == "market" else
             BankView() if destination == "bank" else ArenaView() if destination == "arena" else
-            ExpeditionView() if destination == "expeditions" else ForgeView() if destination == "forge" else
+            ExpeditionView(interaction.user.id) if destination == "expeditions" else ForgeView() if destination == "forge" else
             DarkAlleyView() if destination == "alley" else CastleView() if destination == "castle" else PlaceView(destination))
     content = (arena_home_content(interaction.user.id) if destination == "arena" else
                expedition_home_content(interaction.user.id) if destination == "expeditions" else
@@ -4851,7 +4955,7 @@ async def _send_personal_place(interaction: discord.Interaction, destination: st
         MarketView() if destination == "market" else
         BankView() if destination == "bank" else
         ArenaView() if destination == "arena" else
-        ExpeditionView() if destination == "expeditions" else
+        ExpeditionView(interaction.user.id) if destination == "expeditions" else
         ForgeView() if destination == "forge" else
         DarkAlleyView() if destination == "alley" else
         CastleView() if destination == "castle" else
@@ -4919,7 +5023,7 @@ async def _publish_hub(channel: discord.abc.Messageable) -> discord.Message:
     file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
     embed = discord.Embed(
         title="🌍 Le Monde d'Elyndor",
-        description="Le brouillard recouvre encore une grande partie d’Elyndor. **Altherya** est accessible dès le départ, **KHAZ'GORAM** au niveau 3 et **La Tour d’Ashkar** au niveau 5.",
+        description="Le brouillard recouvre encore une grande partie d’Elyndor. Explore **Altherya**, la **Forêt d’Elarwyn**, le **Mont Vorak**, **KHAZ'GORAM** et **La Tour d’Ashkar**.",
         color=0xB67A2A,
     )
     embed.set_image(url="attachment://elyndor_map.png")
@@ -4935,7 +5039,7 @@ async def ensure_fixed_hub():
     try:
         channel = bot.get_channel(int(channel_id)) or await bot.fetch_channel(int(channel_id))
         message = await channel.fetch_message(int(message_id))
-        embed = discord.Embed(title="🌍 Le Monde d'Elyndor", description="Le brouillard recouvre encore une grande partie d’Elyndor. **Altherya** est accessible dès le départ, **KHAZ'GORAM** au niveau 3 et **La Tour d’Ashkar** au niveau 5.", color=0xB67A2A)
+        embed = discord.Embed(title="🌍 Le Monde d'Elyndor", description="Le brouillard recouvre encore une grande partie d’Elyndor. Explore **Altherya**, la **Forêt d’Elarwyn**, le **Mont Vorak**, **KHAZ'GORAM** et **La Tour d’Ashkar**.", color=0xB67A2A)
         embed.set_image(url="attachment://elyndor_map.png")
         file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
         await message.edit(
@@ -5574,15 +5678,15 @@ async def on_ready():
     if bot.get_cog("LegacyWorldForge") is None:
         await WORLD_FORGE.setup(bot)
 
-    # Reprend les panneaux d'expédition après un redémarrage du bot.
+    # Reprend les expéditions longues après un redémarrage Coolify.
+    # Si le timer s'est terminé pendant l'arrêt, le butin est transféré automatiquement.
     for run in EXPEDITION_STORE.active_runs():
         if run.status_message_id:
             bot.add_view(ExpeditionLiveView(run.user_id, run.run_id))
-            if run.finished:
-                EXPEDITION_STORE.reveal_due_events(run.run_id)
-                asyncio.create_task(refresh_expedition_status(run.run_id))
-            else:
-                start_expedition_monitor(run.run_id)
+        if run.finished:
+            asyncio.create_task(refresh_expedition_status(run.run_id))
+        else:
+            start_expedition_monitor(run.run_id)
 
     bot.add_view(WorldHubView())
     if not gazette_clock.is_running():
@@ -5596,7 +5700,6 @@ async def on_ready():
     bot.add_view(MarketView())
     bot.add_view(BankView())
     bot.add_view(ArenaView())
-    bot.add_view(ExpeditionView())
     bot.add_view(ForgeView())
     bot.add_view(DarkAlleyView())
     bot.add_view(ThiefView())
