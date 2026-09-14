@@ -3388,12 +3388,22 @@ async def finalize_expedition_run(run_id: str) -> bool:
     CASTLE_STORE.record(final_run.user_id, "expedition")
     CASTLE_STORE.add_xp(final_run.user_id, 20)
 
+    # Le message de suivi n'a plus d'utilité une fois l'expédition terminée.
+    # On le supprime automatiquement pour éviter de laisser des panneaux expirés
+    # dans le salon Discord. Le butin est déjà transféré de façon atomique avant
+    # cette suppression, donc un échec de suppression n'affecte jamais les récompenses.
     message = await _get_expedition_status_message(final_run)
     if message:
         try:
-            await message.edit(content=expedition_live_content(final_run), view=None)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            await message.delete()
+        except discord.NotFound:
             pass
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            print(f"[EXPEDITION V1.66.4] suppression du message de suivi impossible : {exc}")
+            try:
+                await message.edit(content="✅ **Expédition terminée.** Le butin a été transféré dans ton inventaire.", view=None)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
     return True
 
 
