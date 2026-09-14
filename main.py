@@ -2958,10 +2958,12 @@ def _destination_keys(location_key: str) -> tuple[str, ...]:
     )
 
 
-def _zone_asset() -> Path:
-    # On réutilise pour le moment l'illustration du tableau d'expédition.
-    # Les images propres à Elarwyn/Vorak pourront être ajoutées plus tard sans changer le gameplay.
-    return PLACES / "expeditions.png"
+def _zone_asset(location_key: str) -> Path:
+    assets = {
+        "elarwyn": PLACES / "elarwyn.png",
+        "vorak": PLACES / "vorak.png",
+    }
+    return assets.get(location_key, PLACES / "expeditions.png")
 
 
 def location_home_content(user_id: int, location_key: str, notice: str | None = None) -> str:
@@ -3459,7 +3461,7 @@ async def open_exploration_location(interaction: discord.Interaction, location_k
     active = EXPEDITION_STORE.active_run(interaction.user.id)
     if active and active.finished:
         await finalize_expedition_run(active.run_id)
-    file = discord.File(_zone_asset(), filename="exploration.png")
+    file = discord.File(_zone_asset(location_key), filename=f"{location_key}.png")
     await interaction.response.send_message(
         content=location_home_content(interaction.user.id, location_key),
         file=file,
