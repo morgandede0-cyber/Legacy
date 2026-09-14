@@ -5595,18 +5595,41 @@ async def gazette_error(interaction: discord.Interaction, error: app_commands.Ap
 
 @bot.tree.command(name="altherya", description="Installe ou déplace la carte du monde permanente de Altherya dans ce salon")
 @app_commands.checks.has_permissions(manage_guild=True)
-async def legacy(interaction: discord.Interaction):
-    """Installe un unique Hub public fixe dans le salon courant.
+async def altherya(interaction: discord.Interaction):
+    """Installe ou déplace le Hub public d'Altherya.
 
-    V1.64.3 : la commande ne peut plus rester bloquée indéfiniment sur
-    « réfléchit… ». Chaque appel Discord sensible possède un timeout et les
-    erreurs sont remontées clairement à l'administrateur.
+    V1.66.2 : Discord exige qu'une interaction soit acquittée en quelques
+    secondes. L'acquittement est donc la toute première opération du callback.
+    Les interactions devenues invalides (10062 / Unknown Interaction) sont
+    ignorées proprement afin d'éviter une seconde erreur trompeuse.
     """
+    # IMPORTANT : aucune I/O, aucun accès disque et aucun traitement ne doit
+    # précéder cet ACK. C'est volontairement la première opération asynchrone.
+    try:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+    except discord.NotFound as exc:
+        # 10062 = interaction déjà expirée/inconnue côté Discord. Une telle
+        # interaction ne peut plus recevoir de réponse : on journalise puis on
+        # quitte proprement sans faire remonter une fausse CommandNotFound.
+        if getattr(exc, "code", None) == 10062:
+            created = getattr(interaction, "created_at", None)
+            age = None
+            try:
+                age = (discord.utils.utcnow() - created).total_seconds() if created else None
+            except Exception:
+                pass
+            age_txt = f" (âge ≈ {age:.2f}s)" if age is not None else ""
+            print(f"[ALTHERYA /altherya] Interaction Discord expirée avant ACK{age_txt}; commande abandonnée proprement.")
+            return
+        raise
+
     if interaction.guild is None or interaction.channel is None:
-        await interaction.response.send_message("❌ Cette commande doit être utilisée dans un serveur.", ephemeral=True)
+        try:
+            await interaction.edit_original_response(content="❌ Cette commande doit être utilisée dans un serveur.")
+        except (discord.NotFound, discord.HTTPException):
+            pass
         return
 
-    await interaction.response.defer(ephemeral=True)
     old = _load_hub_state()
 
     # Supprime l'ancien Hub s'il existe. Un ancien message inaccessible ne doit
@@ -5625,9 +5648,9 @@ async def legacy(interaction: discord.Interaction):
             )
             await asyncio.wait_for(old_message.delete(), timeout=8.0)
     except asyncio.TimeoutError:
-        print("[LEGACY /legacy] Timeout pendant la suppression de l'ancien Hub ; installation poursuivie.")
+        print("[ALTHERYA /altherya] Timeout pendant la suppression de l'ancien Hub ; installation poursuivie.")
     except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError) as exc:
-        print(f"[LEGACY /legacy] Ancien Hub ignoré : {type(exc).__name__}: {exc}")
+        print(f"[ALTHERYA /altherya] Ancien Hub ignoré : {type(exc).__name__}: {exc}")
 
     # Publie le nouveau Hub avec une limite de temps. En cas d'échec, on rend
     # toujours la main à Discord avec un diagnostic au lieu de laisser tourner
@@ -5643,7 +5666,7 @@ async def legacy(interaction: discord.Interaction):
             timeout=10.0,
         )
     except asyncio.TimeoutError:
-        print("[LEGACY /legacy] ERREUR : timeout pendant la publication du Hub.")
+        print("[ALTHERYA /altherya] ERREUR : timeout pendant la publication du Hub.")
         try:
             await interaction.edit_original_response(
                 content="❌ **Le Hub Altherya n'a pas pu être publié : délai d'attente dépassé.**\n"
@@ -5653,7 +5676,7 @@ async def legacy(interaction: discord.Interaction):
         except (discord.HTTPException, discord.NotFound):
             pass
     except Exception as exc:
-        print(f"[LEGACY /legacy] ERREUR publication Hub : {type(exc).__name__}: {exc}")
+        print(f"[ALTHERYA /altherya] ERREUR publication Hub : {type(exc).__name__}: {exc}")
         try:
             await interaction.edit_original_response(
                 content=f"❌ **Impossible d'installer le Hub Altherya.**\n"
@@ -5662,15 +5685,28 @@ async def legacy(interaction: discord.Interaction):
         except (discord.HTTPException, discord.NotFound):
             pass
 
-@legacy.error
-async def legacy_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+@altherya.error
+async def altherya_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         msg = "❌ Seul un administrateur disposant de **Gérer le serveur** peut installer ou déplacer le Hub Altherya."
-        if interaction.response.is_done():
-            await interaction.followup.send(msg, ephemeral=True)
-        else:
-            await interaction.response.send_message(msg, ephemeral=True)
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+        except discord.NotFound as exc:
+            if getattr(exc, "code", None) != 10062:
+                raise
         return
+
+    # Si Discord a déjà invalidé l'interaction (10062), la commande ne peut
+    # plus répondre. On absorbe uniquement ce cas précis au lieu de générer
+    # une cascade d'erreurs dans le gestionnaire de commandes.
+    if isinstance(error, app_commands.CommandInvokeError):
+        original = getattr(error, "original", None)
+        if isinstance(original, discord.NotFound) and getattr(original, "code", None) == 10062:
+            print("[ALTHERYA /altherya] Unknown Interaction (10062) absorbée par le gestionnaire d'erreur.")
+            return
     raise error
 
 @bot.event
