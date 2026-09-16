@@ -37,7 +37,44 @@ class AdminStore:
                 details TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )''')
+            c.execute('''CREATE TABLE IF NOT EXISTS admin_access(
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                granted_by INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(guild_id,user_id)
+            )''')
             c.commit()
+
+    def has_admin_access(self, guild_id: int, user_id: int) -> bool:
+        with self._c() as c:
+            row = c.execute('SELECT 1 FROM admin_access WHERE guild_id=? AND user_id=?',
+                            (int(guild_id), int(user_id))).fetchone()
+        return row is not None
+
+    def grant_admin_access(self, guild_id: int, user_id: int, granted_by: int) -> bool:
+        with self._c() as c:
+            cur = c.execute('INSERT OR IGNORE INTO admin_access(guild_id,user_id,granted_by) VALUES(?,?,?)',
+                            (int(guild_id), int(user_id), int(granted_by)))
+            c.commit()
+        changed = cur.rowcount > 0
+        self.log(granted_by, user_id, 'admin_access_grant', f'guild_id={int(guild_id)} changed={changed}')
+        return changed
+
+    def revoke_admin_access(self, guild_id: int, user_id: int, revoked_by: int) -> bool:
+        with self._c() as c:
+            cur = c.execute('DELETE FROM admin_access WHERE guild_id=? AND user_id=?',
+                            (int(guild_id), int(user_id)))
+            c.commit()
+        changed = cur.rowcount > 0
+        self.log(revoked_by, user_id, 'admin_access_revoke', f'guild_id={int(guild_id)} changed={changed}')
+        return changed
+
+    def list_admin_access(self, guild_id: int) -> list[int]:
+        with self._c() as c:
+            rows = c.execute('SELECT user_id FROM admin_access WHERE guild_id=? ORDER BY created_at,user_id',
+                             (int(guild_id),)).fetchall()
+        return [int(r['user_id']) for r in rows]
 
     def log(self, admin_id: int, target_id: int | None, action: str, details: str = ''):
         with self._c() as c:

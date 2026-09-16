@@ -23,6 +23,7 @@ from tavern_engine import TavernGameStore, MIN_TAVERN_BET, MAX_TAVERN_BET, TAVER
 from tavern_render import render_dice, render_coin, render_rps
 from story_engine import StoryStore, SEASON_1_CHAPTERS, SEASON_1_TITLES, SEASON_1_TEXTS, STORY_REQUIREMENTS, ALL_STORY_ITEMS, STORY_ITEM_PRICES
 from gazette_engine import GazetteStore
+from integrations.oddium.bridge import OddiumBridgeServer
 from expedition_render import render_expedition_live_card
 from job_board_engine import JobBoardStore, RARITIES as JOB_RARITIES
 import legacy_world_forge as WORLD_FORGE
@@ -31,6 +32,9 @@ import tower_engine as TOWER
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 GUILD_ID = os.getenv("GUILD_ID", "").strip()
+ALTHERYA_BRIDGE_TOKEN = os.getenv("ALTHERYA_BRIDGE_TOKEN", "").strip()
+ALTHERYA_BRIDGE_HOST = os.getenv("ALTHERYA_BRIDGE_HOST", "0.0.0.0").strip()
+ALTHERYA_BRIDGE_PORT = int(os.getenv("ALTHERYA_BRIDGE_PORT", "8787"))
 BASE = Path(__file__).resolve().parent
 PLACES = BASE / "assets" / "places"
 TRANSITIONS = BASE / "assets" / "transitions"
@@ -5067,13 +5071,18 @@ async def ensure_fixed_hub():
 # V1.24 — Panneau administrateur
 # =========================
 
-def _admin_ok(interaction: discord.Interaction) -> bool:
+def _native_admin_ok(interaction: discord.Interaction) -> bool:
     return bool(interaction.guild and isinstance(interaction.user, discord.Member) and interaction.user.guild_permissions.administrator)
+
+def _admin_ok(interaction: discord.Interaction) -> bool:
+    if _native_admin_ok(interaction):
+        return True
+    return bool(interaction.guild and ADMIN_STORE.has_admin_access(interaction.guild.id, interaction.user.id))
 
 async def _admin_guard(interaction: discord.Interaction) -> bool:
     if _admin_ok(interaction):
         return True
-    msg = "❌ Ce panneau est réservé aux **administrateurs** du serveur."
+    msg = "❌ Ce panneau est réservé aux **administrateurs autorisés**."
     if interaction.response.is_done():
         await interaction.followup.send(msg, ephemeral=True)
     else:
@@ -5409,6 +5418,53 @@ class AdminCooldownView(discord.ui.View):
         unban.callback=unban_cb
         self.add_item(toggle); self.add_item(reset); self.add_item(unban)
 
+class AdminAccessSelect(discord.ui.UserSelect):
+    def __init__(self, mode: str):
+        self.mode = mode
+        super().__init__(placeholder="Sélectionner le joueur...", min_values=1, max_values=1)
+
+    async def callback(self, i: discord.Interaction):
+        if not _native_admin_ok(i):
+            await i.response.send_message("❌ Seul un administrateur Discord peut gérer les accès `/admin`.", ephemeral=True)
+            return
+        target = self.values[0]
+        if self.mode == 'grant':
+            changed = ADMIN_STORE.grant_admin_access(i.guild.id, target.id, i.user.id)
+            text = f"✅ {target.mention} peut maintenant utiliser `/admin`." if changed else f"ℹ️ {target.mention} avait déjà accès à `/admin`."
+        else:
+            changed = ADMIN_STORE.revoke_admin_access(i.guild.id, target.id, i.user.id)
+            text = f"✅ Accès `/admin` retiré à {target.mention}." if changed else f"ℹ️ {target.mention} n'avait pas d'accès délégué."
+        await announce_player_log(i.guild, target, f"Accès /admin {'accordé' if self.mode == 'grant' else 'retiré'} par {i.user.display_name}", category="Administration")
+        await i.response.edit_message(content=text, view=AdminAccessView())
+
+class AdminAccessPickView(discord.ui.View):
+    def __init__(self, mode: str):
+        super().__init__(timeout=180)
+        self.add_item(AdminAccessSelect(mode))
+
+class AdminAccessView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+        add = discord.ui.Button(label="Ajouter un joueur", emoji="➕", style=discord.ButtonStyle.success)
+        remove = discord.ui.Button(label="Retirer un joueur", emoji="➖", style=discord.ButtonStyle.danger)
+        listing = discord.ui.Button(label="Voir les accès", emoji="👥", style=discord.ButtonStyle.secondary)
+        async def add_cb(i):
+            if not _native_admin_ok(i):
+                await i.response.send_message("❌ Seul un administrateur Discord peut gérer les accès `/admin`.", ephemeral=True); return
+            await i.response.edit_message(content="➕ Sélectionne le joueur à autoriser.", view=AdminAccessPickView('grant'))
+        async def remove_cb(i):
+            if not _native_admin_ok(i):
+                await i.response.send_message("❌ Seul un administrateur Discord peut gérer les accès `/admin`.", ephemeral=True); return
+            await i.response.edit_message(content="➖ Sélectionne le joueur dont tu veux retirer l'accès.", view=AdminAccessPickView('revoke'))
+        async def list_cb(i):
+            if not _native_admin_ok(i):
+                await i.response.send_message("❌ Seul un administrateur Discord peut gérer les accès `/admin`.", ephemeral=True); return
+            ids = ADMIN_STORE.list_admin_access(i.guild.id)
+            text = "👥 **Joueurs autorisés à utiliser `/admin`**\n" + ("\n".join(f"• <@{uid}>" for uid in ids) if ids else "*Aucun accès délégué.*")
+            await i.response.edit_message(content=text, view=AdminAccessView())
+        add.callback=add_cb; remove.callback=remove_cb; listing.callback=list_cb
+        self.add_item(add); self.add_item(remove); self.add_item(listing)
+
 class AdminPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
@@ -5416,7 +5472,8 @@ class AdminPanelView(discord.ui.View):
             ('money','Argent','💰',discord.ButtonStyle.success),('level','Niveaux','📈',discord.ButtonStyle.primary),
             ('events','Événements','🎉',discord.ButtonStyle.primary),('moderation','Modération','🛡️',discord.ButtonStyle.danger),
             ('success','Succès','🏆',discord.ButtonStyle.secondary),('items','Items','🎒',discord.ButtonStyle.secondary),
-            ('cooldowns','Cooldowns','⏱️',discord.ButtonStyle.secondary)
+            ('cooldowns','Cooldowns','⏱️',discord.ButtonStyle.secondary),
+            ('access','Accès /admin','👥',discord.ButtonStyle.secondary)
         ]
         for action,label,emoji,style in data:
             b=discord.ui.Button(label=label,emoji=emoji,style=style)
@@ -5429,25 +5486,30 @@ class AdminPanelView(discord.ui.View):
                 elif a=='cooldowns':
                     state='ACTIVÉS' if ADMIN_STORE.cooldowns_enabled() else 'DÉSACTIVÉS'
                     await i.response.send_message(f"⏱️ **Gestion des cooldowns**\nÉtat global : **{state}**",view=AdminCooldownView(),ephemeral=True)
+                elif a=='access':
+                    if not _native_admin_ok(i):
+                        await i.response.send_message("❌ Seul un administrateur Discord peut gérer les accès `/admin`.",ephemeral=True)
+                    else:
+                        await i.response.send_message("👥 **Gestion des accès `/admin`**\nAjoute ou retire les joueurs autorisés à administrer Altherya.",view=AdminAccessView(),ephemeral=True)
                 else:
                     title={'money':'💰 Argent','level':'📈 Niveaux','moderation':'🛡️ Modération','items':'🎒 Items'}[a]
                     await i.response.send_message(f"{title} — sélectionne un joueur.",view=AdminTargetView(a),ephemeral=True)
             b.callback=cb; self.add_item(b)
 
 @bot.tree.command(name="admin", description="Ouvre le panneau d'administration de Altherya")
-@app_commands.default_permissions(administrator=True)
-@app_commands.checks.has_permissions(administrator=True)
 async def admin(interaction: discord.Interaction):
     if interaction.guild is None:
         await interaction.response.send_message("❌ Cette commande doit être utilisée dans un serveur.",ephemeral=True); return
+    if not await _admin_guard(interaction):
+        return
     gold='🟢 ON' if ADMIN_STORE.event_enabled('gold_x2') else '⚫ OFF'
     xp='🟢 ON' if ADMIN_STORE.event_enabled('xp_x2') else '⚫ OFF'
     embed=discord.Embed(title="🛡️ Panneau d'administration — Altherya",description="Gestion du bot et des joueurs. Toutes les actions sont privées et journalisées.",color=discord.Color.dark_gold())
     embed.add_field(name="Événements",value=f"💰 Gold x2 : **{gold}**\n✨ XP x2 : **{xp}**",inline=False)
     cooldowns='🟢 ON' if ADMIN_STORE.cooldowns_enabled() else '🔴 OFF'
     embed.add_field(name="Cooldowns",value=f"⏱️ Cooldowns globaux : **{cooldowns}**",inline=False)
-    embed.add_field(name="Outils",value="💰 Argent • 📈 Niveaux • 🎉 Événements • 🛡️ Modération • 🏆 Succès • 🎒 Items • ⏱️ Cooldowns",inline=False)
-    embed.set_footer(text="Altherya Admin • réservé aux administrateurs")
+    embed.add_field(name="Outils",value="💰 Argent • 📈 Niveaux • 🎉 Événements • 🛡️ Modération • 🏆 Succès • 🎒 Items • ⏱️ Cooldowns • 👥 Accès /admin",inline=False)
+    embed.set_footer(text="Altherya Admin • administrateurs Discord + joueurs autorisés")
     await interaction.response.send_message(embed=embed,view=AdminPanelView(),ephemeral=True)
 
 @admin.error
@@ -5721,8 +5783,87 @@ async def altherya_error(interaction: discord.Interaction, error: app_commands.A
             return
     raise error
 
+async def _oddium_bridge_event(event: dict):
+    """Route Oddium audit/results into Altherya's configured channels."""
+    guild = bot.get_guild(int(GUILD_ID)) if GUILD_ID else (bot.guilds[0] if bot.guilds else None)
+    if guild is None:
+        return
+    user_id = int(event.get("user_id") or 0)
+    if not user_id:
+        return
+    user = guild.get_member(user_id) or bot.get_user(user_id)
+    if user is None:
+        try:
+            user = await bot.fetch_user(user_id)
+        except (discord.NotFound, discord.HTTPException):
+            user = user_id
+
+    kind = str(event.get("type") or "")
+    stake = int(event.get("stake") or 0)
+    home = str(event.get("home_team") or "")
+    away = str(event.get("away_team") or "")
+    combo_count = int(event.get("combo_count") or 0)
+
+    if kind == "bet_placed":
+        if combo_count:
+            action = f"a parié **{stake:,} Gold** sur un combiné de **{combo_count} matchs**".replace(",", " ")
+            details = f"Cote totale : **{float(event.get('odd') or 0):.2f}**"
+        else:
+            action = f"a parié **{stake:,} Gold** sur le match **{home} - {away}**".replace(",", " ")
+            details = f"Ticket : **{event.get('reference', 'Oddium')}**"
+        await announce_player_log(guild, user, action, category="Administrateur", details=details)
+        return
+
+    if kind != "ticket_settled":
+        return
+    status = str(event.get("status") or "")
+    payout = int(event.get("payout") or 0)
+    is_combo = bool(event.get("is_combo") or event.get("combo_id"))
+    game = f"Oddium — Combiné ×{combo_count or 'multi'}" if is_combo else f"Oddium — {home} - {away}"
+    mention = getattr(user, "mention", f"<@{user_id}>")
+    channel_id = ACHIEVEMENT_STORE.get_channel(guild.id)
+    if not channel_id:
+        return
+    try:
+        channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
+        if status == "WON":
+            title = "🎲 GAIN DE JEU"
+            description = f"{mention} **gagne {payout:,} Gold**.\n**Jeu :** {game}".replace(",", " ")
+            color = discord.Color.green()
+        elif status == "LOST":
+            title = "🎲 PERTE DE JEU"
+            description = f"{mention} **perd {stake:,} Gold**.\n**Jeu :** {game}".replace(",", " ")
+            color = discord.Color.red()
+        else:
+            title = "♻️ REMBOURSEMENT DE JEU"
+            description = f"{mention} **récupère {payout or stake:,} Gold**.\n**Jeu :** {game}".replace(",", " ")
+            color = discord.Color.light_grey()
+        e = discord.Embed(title=title, description=description, color=color)
+        avatar = getattr(getattr(user, "display_avatar", None), "url", None)
+        if avatar:
+            e.set_thumbnail(url=avatar)
+        e.set_footer(text="Altherya • Résultats publics")
+        await channel.send(embed=e)
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
+        pass
+
+
+ODDIUM_BRIDGE = OddiumBridgeServer(
+    db_path=DATA / "legacy.sqlite3",
+    token=ALTHERYA_BRIDGE_TOKEN,
+    host=ALTHERYA_BRIDGE_HOST,
+    port=ALTHERYA_BRIDGE_PORT,
+    event_handler=_oddium_bridge_event,
+)
+ODDIUM_BRIDGE_STARTED = False
+
+
 @bot.event
 async def on_ready():
+    global ODDIUM_BRIDGE_STARTED
+    if not ODDIUM_BRIDGE_STARTED:
+        await ODDIUM_BRIDGE.start()
+        ODDIUM_BRIDGE_STARTED = True
     if bot.get_cog("LegacyWorldForge") is None:
         await WORLD_FORGE.setup(bot)
 
