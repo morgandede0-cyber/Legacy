@@ -5498,10 +5498,19 @@ class AdminPanelView(discord.ui.View):
 
 @bot.tree.command(name="admin", description="Ouvre le panneau d'administration de Altherya")
 async def admin(interaction: discord.Interaction):
+    # V1.67.2 — ACK immédiat : évite les 10062/40060 si SQLite ou Discord prend > 3 s.
     if interaction.guild is None:
-        await interaction.response.send_message("❌ Cette commande doit être utilisée dans un serveur.",ephemeral=True); return
-    if not await _admin_guard(interaction):
+        await interaction.response.send_message("❌ Cette commande doit être utilisée dans un serveur.", ephemeral=True)
         return
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    # IMPORTANT : aucun has_permissions(administrator=True) Discord ici.
+    # L'accès est décidé par _admin_ok : administrateur Discord OU joueur délégué.
+    if not _admin_ok(interaction):
+        await interaction.followup.send("❌ Ce panneau est réservé aux **administrateurs autorisés**.", ephemeral=True)
+        return
+
     gold='🟢 ON' if ADMIN_STORE.event_enabled('gold_x2') else '⚫ OFF'
     xp='🟢 ON' if ADMIN_STORE.event_enabled('xp_x2') else '⚫ OFF'
     embed=discord.Embed(title="🛡️ Panneau d'administration — Altherya",description="Gestion du bot et des joueurs. Toutes les actions sont privées et journalisées.",color=discord.Color.dark_gold())
@@ -5510,16 +5519,23 @@ async def admin(interaction: discord.Interaction):
     embed.add_field(name="Cooldowns",value=f"⏱️ Cooldowns globaux : **{cooldowns}**",inline=False)
     embed.add_field(name="Outils",value="💰 Argent • 📈 Niveaux • 🎉 Événements • 🛡️ Modération • 🏆 Succès • 🎒 Items • ⏱️ Cooldowns • 👥 Accès /admin",inline=False)
     embed.set_footer(text="Altherya Admin • administrateurs Discord + joueurs autorisés")
-    await interaction.response.send_message(embed=embed,view=AdminPanelView(),ephemeral=True)
+    await interaction.followup.send(embed=embed, view=AdminPanelView(), ephemeral=True)
 
 @admin.error
-async def admin_error(interaction: discord.Interaction,error: app_commands.AppCommandError):
-    if isinstance(error,app_commands.MissingPermissions):
-        msg="❌ La commande `/admin` est réservée aux administrateurs."
-        if interaction.response.is_done(): await interaction.followup.send(msg,ephemeral=True)
-        else: await interaction.response.send_message(msg,ephemeral=True)
-        return
-    raise error
+async def admin_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    # Réponse sûre : ne jamais acquitter deux fois la même interaction.
+    msg = "❌ Impossible d'ouvrir `/admin`."
+    if isinstance(error, app_commands.CheckFailure):
+        msg = "❌ Ce panneau est réservé aux **administrateurs autorisés**."
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except (discord.NotFound, discord.HTTPException):
+        pass
+    if not isinstance(error, app_commands.CheckFailure):
+        raise error
 
 @bot.tree.command(name="succes", description="Définit le salon public des succès et résultats de jeux de Altherya")
 @app_commands.checks.has_permissions(manage_guild=True)
