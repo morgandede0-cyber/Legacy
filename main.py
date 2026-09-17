@@ -166,6 +166,65 @@ async def announce_public_result(guild: discord.Guild | None, user, title: str, 
         pass
 
 
+# V1.70 — Les expéditions sont privées dans leur zone, mais leur départ/retour
+# est raconté publiquement dans le salon configuré avec /succes.
+def _expedition_public_embed(run, *, finished: bool = False) -> discord.Embed:
+    zone = EXPEDITIONS[run.expedition_key]
+    location = LOCATION_META[zone["location_key"]]
+    activity = {
+        "axe": "couper du bois",
+        "pickaxe": "extraire des minerais",
+        "spear": "chasser",
+    }.get(run.tool_key, _activity_label(run.tool_key).lower())
+    activity_emoji = _activity_emoji(run.tool_key)
+    if finished:
+        total = sum((run.loot or {}).values())
+        description = (
+            f"<@{run.user_id}> est revenu de **{location['name']}**.\n"
+            f"{activity_emoji} Activité : **{activity}**\n"
+            f"📦 Récolte rapportée : **{total}/{run.capacity} objets**"
+        )
+        embed = discord.Embed(title="✅ EXPÉDITION TERMINÉE", description=description, color=discord.Color.green())
+    else:
+        description = (
+            f"{activity_emoji} <@{run.user_id}> est parti **{activity}** dans **{location['name']}**.\n"
+            f"🗺️ Destination : **{zone['name']}**\n"
+            f"⏳ Durée : **{zone['duration_label']}**\n\n"
+            "*Que les terres d’Elyndor lui soient favorables...*"
+        )
+        embed = discord.Embed(title="🧭 EXPÉDITION EN COURS", description=description, color=discord.Color.dark_gold())
+    embed.set_footer(text="Altherya • Expéditions")
+    return embed
+
+
+async def announce_expedition_start(guild: discord.Guild | None, run):
+    """Publie UNE annonce publique et mémorise son message pour le mettre à jour au retour."""
+    if guild is None:
+        return None
+    channel_id = ACHIEVEMENT_STORE.get_channel(guild.id)
+    if not channel_id:
+        return None
+    try:
+        channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
+        message = await channel.send(embed=_expedition_public_embed(run, finished=False))
+        EXPEDITION_STORE.bind_status_message(run.run_id, message.channel.id, message.id)
+        return message
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError) as exc:
+        print(f"[EXPEDITION V1.70] annonce publique impossible : {exc}")
+        return None
+
+
+async def finish_expedition_announcement(run):
+    """Transforme l'annonce de départ en résultat, sans créer un second message public."""
+    message = await _get_expedition_status_message(run)
+    if message is None:
+        return
+    try:
+        await message.edit(embed=_expedition_public_embed(run, finished=True), content=None, view=None)
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        pass
+
+
 async def announce_gold_activity(guild: discord.Guild | None, user, delta: int, reason: str, *, counterpart=None, details: str | None = None, public: bool = True):
     """
     Journalise tous les mouvements de Gold dans /logs.
@@ -3272,17 +3331,12 @@ class ExpeditionPreparationView(discord.ui.View):
                 view=ExplorationLocationView(self.owner_id, location_key),
             )
 
-            # Le suivi longue durée est un message serveur classique : contrairement à une
-            # réponse éphémère, Discord autorise sa mise à jour pendant 1 à 8 heures.
-            try:
-                status_message = await interaction.channel.send(
-                    content=expedition_live_content(run),
-                    view=ExpeditionLiveView(self.owner_id, run.run_id),
-                )
-                EXPEDITION_STORE.bind_status_message(run.run_id, status_message.channel.id, status_message.id)
-                start_expedition_monitor(run.run_id)
-            except (discord.Forbidden, discord.HTTPException, AttributeError) as exc:
-                print(f"[EXPEDITION V1.66] message de suivi impossible : {exc}")
+            # V1.70 : aucun panneau personnel n'est publié dans le salon de la zone.
+            # Le suivi détaillé reste consultable uniquement par le joueur en revenant
+            # dans la destination concernée. Seul un événement RP compact est envoyé
+            # dans le salon public configuré avec /succes.
+            await announce_expedition_start(interaction.guild, run)
+            start_expedition_monitor(run.run_id)
 
         async def back_cb(interaction: discord.Interaction):
             await interaction.response.edit_message(
@@ -3392,22 +3446,9 @@ async def finalize_expedition_run(run_id: str) -> bool:
     CASTLE_STORE.record(final_run.user_id, "expedition")
     CASTLE_STORE.add_xp(final_run.user_id, 20)
 
-    # Le message de suivi n'a plus d'utilité une fois l'expédition terminée.
-    # On le supprime automatiquement pour éviter de laisser des panneaux expirés
-    # dans le salon Discord. Le butin est déjà transféré de façon atomique avant
-    # cette suppression, donc un échec de suppression n'affecte jamais les récompenses.
-    message = await _get_expedition_status_message(final_run)
-    if message:
-        try:
-            await message.delete()
-        except discord.NotFound:
-            pass
-        except (discord.Forbidden, discord.HTTPException) as exc:
-            print(f"[EXPEDITION V1.66.4] suppression du message de suivi impossible : {exc}")
-            try:
-                await message.edit(content="✅ **Expédition terminée.** Le butin a été transféré dans ton inventaire.", view=None)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                pass
+    # V1.70 : le message mémorisé est l'annonce publique /succes, pas le panneau privé.
+    # On transforme donc l'annonce « en cours » en résultat final au lieu de la supprimer.
+    await finish_expedition_announcement(final_run)
     return True
 
 
@@ -3421,16 +3462,9 @@ async def refresh_expedition_status(run_id: str):
         if run.finished:
             await finalize_expedition_run(run_id)
             run = EXPEDITION_STORE.run_by_id(run_id) or run
-    message = await _get_expedition_status_message(run)
-    if message is None:
-        return
-    try:
-        await message.edit(
-            content=expedition_live_content(run),
-            view=None if run.claimed else ExpeditionLiveView(run.user_id, run.run_id),
-        )
-    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-        pass
+    # V1.70 : ne jamais pousser le timer/logs personnels dans un salon public.
+    # Le panneau live est reconstruit à la demande dans la destination du joueur.
+    return
 
 
 async def monitor_expedition(run_id: str):
@@ -6045,8 +6079,8 @@ async def on_ready():
     # Reprend les expéditions longues après un redémarrage Coolify.
     # Si le timer s'est terminé pendant l'arrêt, le butin est transféré automatiquement.
     for run in EXPEDITION_STORE.active_runs():
-        if run.status_message_id:
-            bot.add_view(ExpeditionLiveView(run.user_id, run.run_id))
+        # V1.70 : status_message_id référence l'annonce publique /succes ;
+        # aucune vue de suivi personnel persistante n'est attachée à ce message.
         if run.finished:
             asyncio.create_task(refresh_expedition_status(run.run_id))
         else:
