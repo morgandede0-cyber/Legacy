@@ -28,7 +28,7 @@ from expedition_render import render_expedition_live_card
 from job_board_engine import JobBoardStore, RARITIES as JOB_RARITIES
 import legacy_world_forge as WORLD_FORGE
 import tower_engine as TOWER
-from world_engine import current_event
+from world_engine import current_event, destination_name, destination_description
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
@@ -300,9 +300,10 @@ async def announce_gold_activity(guild: discord.Guild | None, user, delta: int, 
         pass
 
 class WorldHubView(discord.ui.View):
-    """Carte du monde publique : chaque destination ouvre une session privée au joueur."""
-    def __init__(self):
-        super().__init__(timeout=None)
+    """Carte du monde. Le premier clic public crée UNE session privée, puis elle s'auto-actualise."""
+    def __init__(self, private_session: bool = False):
+        super().__init__(timeout=None if not private_session else 1800)
+        self.private_session = bool(private_session)
         legacy_btn = discord.ui.Button(label="Altherya", emoji="👑", style=discord.ButtonStyle.primary, custom_id="legacy:world:city", row=0)
         forge_btn = discord.ui.Button(label="La Forge de KHAZ'GORAM", emoji="⚒️", style=discord.ButtonStyle.secondary, custom_id="legacy:world:khaz", row=0)
         tower_btn = discord.ui.Button(label="La Tour d’Ashkar", emoji="🗼", style=discord.ButtonStyle.danger, custom_id="legacy:world:ashkar", row=0)
@@ -311,18 +312,25 @@ class WorldHubView(discord.ui.View):
 
         async def legacy_cb(interaction: discord.Interaction):
             file = discord.File(PLACES / "hub.png", filename="legacy.png")
-            await interaction.response.send_message(
-                content="🏙️ **Altherya**\nBienvenue dans la cité. Choisis ta destination.",
-                file=file, view=HubView(), ephemeral=True
-            )
+            if self.private_session:
+                await interaction.response.edit_message(
+                    content="🏙️ **Altherya**\nBienvenue dans la cité. Choisis ta destination.",
+                    attachments=[file], embeds=[], view=HubView(private_session=True)
+                )
+            else:
+                await interaction.response.send_message(
+                    content="🏙️ **Altherya**\nBienvenue dans la cité. Choisis ta destination.",
+                    file=file, view=HubView(private_session=True), ephemeral=True
+                )
 
         async def forge_cb(interaction: discord.Interaction):
             level = CASTLE_STORE.current_level(interaction.user.id)
             if level < 3:
-                await interaction.response.send_message(
-                    f"🔒 **La Forge de KHAZ'GORAM** se débloque au **niveau 3**.\nTon niveau actuel : **{level}**.",
-                    ephemeral=True,
-                )
+                text = f"🔒 **La Forge de KHAZ'GORAM** se débloque au **niveau 3**.\nTon niveau actuel : **{level}**."
+                if self.private_session:
+                    await interaction.response.edit_message(content=text, attachments=[], embeds=[], view=WorldHubView(private_session=True))
+                else:
+                    await interaction.response.send_message(text, ephemeral=True)
                 return
             file = discord.File(WORLD_FORGE.KHAZ_GORAM, filename="khaz_goram.png")
             embed = discord.Embed(
@@ -331,16 +339,19 @@ class WorldHubView(discord.ui.View):
                 color=0xB67A2A,
             )
             embed.set_image(url="attachment://khaz_goram.png")
-            await interaction.response.send_message(embed=embed, file=file, view=WORLD_FORGE.KhazGoramView(), ephemeral=True)
+            if self.private_session:
+                await interaction.response.edit_message(content=None, embed=embed, attachments=[file], view=WORLD_FORGE.KhazGoramView())
+            else:
+                await interaction.response.send_message(embed=embed, file=file, view=WORLD_FORGE.KhazGoramView(), ephemeral=True)
 
         async def tower_cb(interaction: discord.Interaction):
-            await TOWER.show_lobby(interaction)
+            await TOWER.show_lobby(interaction, edit=self.private_session)
 
         async def forest_cb(interaction: discord.Interaction):
-            await open_exploration_location(interaction, "elarwyn")
+            await open_exploration_location(interaction, "elarwyn", edit=self.private_session)
 
         async def mountain_cb(interaction: discord.Interaction):
-            await open_exploration_location(interaction, "vorak")
+            await open_exploration_location(interaction, "vorak", edit=self.private_session)
 
         legacy_btn.callback = legacy_cb
         forge_btn.callback = forge_cb
@@ -351,8 +362,9 @@ class WorldHubView(discord.ui.View):
         self.add_item(forest_btn); self.add_item(mountain_btn)
 
 class HubView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
+    def __init__(self, private_session: bool = False):
+        super().__init__(timeout=None if not private_session else 1800)
+        self.private_session = bool(private_session)
         for key, data in DESTINATIONS.items():
             button = discord.ui.Button(
                 label=data["label"], emoji=data["emoji"],
@@ -360,16 +372,20 @@ class HubView(discord.ui.View):
                 custom_id=f"legacy:hub:{key}"
             )
             async def callback(interaction: discord.Interaction, destination=key):
-                await travel(interaction, destination)
+                await travel(interaction, destination, edit=self.private_session)
             button.callback = callback
             self.add_item(button)
 
         board = discord.ui.Button(label="Panneau central", emoji="📋", style=discord.ButtonStyle.primary,
                                   custom_id="legacy:hub:central_board")
         async def board_cb(interaction: discord.Interaction):
-            # Le panneau est accessible depuis le Hub public, mais son contenu reste personnel.
-            await interaction.response.send_message("📋 **Tu consultes le panneau central...**", ephemeral=True)
-            await show_central_board(interaction)
+            # Public -> crée la session privée. Privé -> réutilise exactement la même fenêtre.
+            if self.private_session:
+                await safe_defer(interaction)
+                await show_central_board(interaction)
+            else:
+                await interaction.response.send_message("📋 **Tu consultes le panneau central...**", ephemeral=True)
+                await show_central_board(interaction)
         board.callback = board_cb
         self.add_item(board)
         world = discord.ui.Button(label="Monde", emoji="🌍", style=discord.ButtonStyle.secondary, custom_id="legacy:hub:world")
@@ -377,7 +393,10 @@ class HubView(discord.ui.View):
             file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
             embed = discord.Embed(title="🌍 Le Monde d\'Elyndor", description="Le brouillard recouvre les destinations encore inconnues. **Altherya** et **KHAZ\'GORAM** sont accessibles.", color=0xB67A2A)
             embed.set_image(url="attachment://elyndor_map.png")
-            await interaction.response.send_message(embed=embed, file=file, view=WorldHubView(), ephemeral=True)
+            if self.private_session:
+                await interaction.response.edit_message(content=None, embed=embed, attachments=[file], view=WorldHubView(private_session=True))
+            else:
+                await interaction.response.send_message(embed=embed, file=file, view=WorldHubView(private_session=True), ephemeral=True)
         world.callback = world_cb
         self.add_item(world)
 
@@ -3030,6 +3049,15 @@ def _zone_asset(location_key: str) -> Path:
     return assets.get(location_key, PLACES / "expeditions.png")
 
 
+def _expedition_display_name(expedition_key: str) -> str:
+    """Nom RP V2 affiché, indépendant des anciennes valeurs génériques en base/code."""
+    return destination_name(expedition_key) or EXPEDITIONS.get(expedition_key, {}).get("name", expedition_key)
+
+
+def _expedition_display_description(expedition_key: str) -> str:
+    return destination_description(expedition_key) or EXPEDITIONS.get(expedition_key, {}).get("description", "")
+
+
 def location_home_content(user_id: int, location_key: str, notice: str | None = None) -> str:
     meta = LOCATION_META[location_key]
     active = EXPEDITION_STORE.active_run(user_id)
@@ -3068,7 +3096,7 @@ def location_home_content(user_id: int, location_key: str, notice: str | None = 
         zone = EXPEDITIONS[key]
         lock = "✅" if level >= zone["level"] else "🔒"
         lines.append(
-            f"{lock} **{zone['name']}** • Niveau **{zone['level']}** • ⏳ **{zone['duration_label']}** • ☠️ {zone['danger']}"
+            f"{lock} **{_expedition_display_name(key)}** • Niveau **{zone['level']}** • ⏳ **{zone['duration_label']}** • ☠️ {zone['danger']}"
         )
     return "\n".join(lines)
 
@@ -3086,7 +3114,7 @@ class ExplorationLocationView(discord.ui.View):
                 zone = EXPEDITIONS[key]
                 unlocked = level >= zone["level"]
                 button = discord.ui.Button(
-                    label=f"Destination {idx}",
+                    label=_expedition_display_name(key)[:80],
                     emoji="🗺️" if unlocked else "🔒",
                     style=discord.ButtonStyle.primary if unlocked else discord.ButtonStyle.secondary,
                     disabled=not unlocked,
@@ -3140,7 +3168,7 @@ class ExplorationLocationView(discord.ui.View):
                 color=0xB67A2A,
             )
             embed.set_image(url="attachment://elyndor_map.png")
-            await interaction.response.edit_message(content=None, embed=embed, attachments=[file], view=WorldHubView())
+            await interaction.response.edit_message(content=None, embed=embed, attachments=[file], view=WorldHubView(private_session=True))
 
         refresh.callback = refresh_cb
         world.callback = world_cb
@@ -3154,8 +3182,8 @@ def activity_content(expedition_key: str) -> str:
     location = LOCATION_META[zone["location_key"]]
     activities = " • ".join(f"{_activity_emoji(k)} **{_activity_label(k)}**" for k in zone["tools"])
     return (
-        f"{location['emoji']} **{location['name']} — {zone['name']}**\n"
-        f"_{zone.get('description','')}_\n\n"
+        f"{location['emoji']} **{location['name']} — {_expedition_display_name(expedition_key)}**\n"
+        f"_{_expedition_display_description(expedition_key)}_\n\n"
         f"{event['emoji']} **MONDE VIVANT — {event['name']}**\n{event['description']}\n\n"
         f"⏳ Durée : **{zone['duration_label']}**\n"
         f"🎚️ Niveau requis : **{zone['level']}**\n"
@@ -3506,20 +3534,24 @@ def start_expedition_monitor(run_id: str):
     EXPEDITION_MONITORS[str(run_id)] = asyncio.create_task(monitor_expedition(str(run_id)))
 
 
-async def open_exploration_location(interaction: discord.Interaction, location_key: str):
+async def open_exploration_location(interaction: discord.Interaction, location_key: str, *, edit: bool = False):
     if location_key not in LOCATION_META:
-        await interaction.response.send_message("Zone inconnue.", ephemeral=True)
+        if edit:
+            await interaction.response.edit_message(content="Zone inconnue.", attachments=[], embeds=[], view=WorldHubView())
+        else:
+            await interaction.response.send_message("Zone inconnue.", ephemeral=True)
         return
     active = EXPEDITION_STORE.active_run(interaction.user.id)
     if active and active.finished:
         await finalize_expedition_run(active.run_id)
     file = discord.File(_zone_asset(location_key), filename=f"{location_key}.png")
-    await interaction.response.send_message(
-        content=location_home_content(interaction.user.id, location_key),
-        file=file,
-        view=ExplorationLocationView(interaction.user.id, location_key),
-        ephemeral=True,
-    )
+    content = location_home_content(interaction.user.id, location_key)
+    view = ExplorationLocationView(interaction.user.id, location_key)
+    if edit:
+        await interaction.response.edit_message(content=content, attachments=[file], embeds=[], view=view)
+    else:
+        # Première ouverture : une seule fenêtre privée est créée. Ensuite toute la navigation l'édite.
+        await interaction.response.send_message(content=content, file=file, view=view, ephemeral=True)
 
 
 # ============================================================
@@ -4981,7 +5013,7 @@ async def show_horse_wakeup(interaction: discord.Interaction, drink_line: str):
     file=discord.File(EVENTS/'horse_wakeup.png',filename='scene.png')
     await interaction.response.send_message(content=(drink_line+"\n\n🐴 **IL JUGE MES CHOIX DE VIE**\n\nTu ouvres les yeux avec un mal de crâne monumental. De la paille partout. Une bouteille vide à côté de toi.\n\nUn fermier te fixe, bras croisés. Derrière lui, un cheval te regarde avec une déception si profonde que tu t’excuses spontanément.\n\n**Tu n’as absolument aucun souvenir de la façon dont tu es arrivé ici.**"),file=file,view=HorseWakeView(),ephemeral=True)
 
-async def _send_personal_place(interaction: discord.Interaction, destination: str):
+async def _send_personal_place(interaction: discord.Interaction, destination: str, *, edit: bool = False):
     """Ouvre un lieu dans une session éphémère privée au joueur.
 
     Le Hub public n'est jamais modifié : chaque joueur possède donc sa propre
@@ -5024,35 +5056,32 @@ async def _send_personal_place(interaction: discord.Interaction, destination: st
         f"{data['emoji']} **{data['label']} de Altherya**"
     )
     file = discord.File(image, filename="lieu.png")
-    await interaction.response.send_message(
-        content=content,
-        file=file,
-        view=view,
-        ephemeral=True,
-    )
+    if edit:
+        await interaction.response.edit_message(content=content, attachments=[file], embeds=[], view=view)
+    else:
+        await interaction.response.send_message(content=content, file=file, view=view, ephemeral=True)
 
-async def travel(interaction: discord.Interaction, destination: str):
-    # V1.22 : plus aucune animation depuis le Hub central.
-    # Un clic sur le Hub public ouvre immédiatement une session privée.
-    await _send_personal_place(interaction, destination)
+async def travel(interaction: discord.Interaction, destination: str, *, edit: bool = False):
+    # Depuis le Hub public : création d'une unique session privée.
+    # Depuis cette session : navigation par édition du même message, façon Oddium.
+    await _send_personal_place(interaction, destination, edit=edit)
 
 async def return_to_hub(interaction: discord.Interaction):
-    """Ferme la session personnelle. Le Hub public reste visible dans le salon."""
+    """Retourne à Altherya dans LA MÊME fenêtre privée, sans empiler de messages."""
+    file = discord.File(PLACES / "hub.png", filename="legacy.png")
     try:
         if not interaction.response.is_done():
-            await interaction.response.defer()
-        await interaction.delete_original_response()
-    except (discord.NotFound, discord.HTTPException):
-        # Repli propre si Discord ne permet plus de supprimer le message éphémère.
-        try:
-            await interaction.edit_original_response(
-                content="🏙️ **Retour à la Place centrale.** Tu peux choisir une nouvelle destination sur le Hub.",
-                attachments=[],
-                embeds=[],
-                view=None,
+            await interaction.response.edit_message(
+                content="🏙️ **Altherya**\nBienvenue dans la cité. Choisis ta destination.",
+                attachments=[file], embeds=[], view=HubView(private_session=True),
             )
-        except discord.HTTPException:
-            pass
+        else:
+            await interaction.edit_original_response(
+                content="🏙️ **Altherya**\nBienvenue dans la cité. Choisis ta destination.",
+                attachments=[file], embeds=[], view=HubView(private_session=True),
+            )
+    except (discord.NotFound, discord.HTTPException):
+        pass
 
 def _load_hub_state() -> dict:
     try:
