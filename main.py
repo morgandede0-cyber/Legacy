@@ -28,6 +28,7 @@ from expedition_render import render_expedition_live_card
 from job_board_engine import JobBoardStore, RARITIES as JOB_RARITIES
 import legacy_world_forge as WORLD_FORGE
 import tower_engine as TOWER
+from world_engine import current_event
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
@@ -3149,10 +3150,13 @@ class ExplorationLocationView(discord.ui.View):
 
 def activity_content(expedition_key: str) -> str:
     zone = EXPEDITIONS[expedition_key]
+    event = current_event(zone.get("location_key", ""))
     location = LOCATION_META[zone["location_key"]]
     activities = " • ".join(f"{_activity_emoji(k)} **{_activity_label(k)}**" for k in zone["tools"])
     return (
-        f"{location['emoji']} **{location['name']} — {zone['name']}**\n\n"
+        f"{location['emoji']} **{location['name']} — {zone['name']}**\n"
+        f"_{zone.get('description','')}_\n\n"
+        f"{event['emoji']} **MONDE VIVANT — {event['name']}**\n{event['description']}\n\n"
         f"⏳ Durée : **{zone['duration_label']}**\n"
         f"🎚️ Niveau requis : **{zone['level']}**\n"
         f"☠️ Danger : **{zone['danger']}**\n\n"
@@ -5697,6 +5701,44 @@ class AdminPanelView(discord.ui.View):
             if await _admin_guard(i): await i.response.edit_message(content='👥 **ADMINISTRATION DES JOUEURS**\nSélectionne un joueur pour ouvrir sa fiche complète.',embed=None,view=AdminPlayersView())
         server.callback=server_cb; players.callback=players_cb; self.add_item(server); self.add_item(players)
 
+
+def _player_profile_embed(member: discord.Member) -> discord.Embed:
+    uid = member.id
+    bal = ECONOMY.get_balance(uid)
+    castle = CASTLE_STORE.profile(uid)
+    level = level_from_xp(int(castle.get("xp", 0)))[0]
+    tav = TAVERN_STORE.tavern_reputation(uid)
+    criminal = DARK_STORE.criminal_reputation(uid)
+    casino = CASINO_STORE.loyalty(uid)
+    arena = ARENA_STORE.progress(uid)
+    unlocked = len(ACHIEVEMENT_STORE.unlocked_keys(uid))
+    gear = EXPEDITION_STORE.get_gear(uid)
+    active = EXPEDITION_STORE.active_run(uid)
+    e = discord.Embed(
+        title=f"⚔️ {member.display_name} • Chronique d’Altherya",
+        description=f"**Niveau {level}** • {int(castle.get('xp',0)):,} XP\nUn habitant d’Elyndor dont les actes façonnent peu à peu sa légende.".replace(',', ' '),
+        color=discord.Color.dark_gold(),
+    )
+    e.set_thumbnail(url=member.display_avatar.url)
+    e.add_field(name="💰 Fortune", value=f"Poche **{bal.wallet:,}** Gold\nBanque **{bal.bank:,}** Gold".replace(',', ' '), inline=True)
+    e.add_field(name="🏆 Parcours", value=f"⚔️ {int(castle.get('combats',0))} combats\n🏅 {int(castle.get('wins',0))} victoires\n🧭 {int(castle.get('expeditions',0))} expéditions\n✨ {unlocked} succès", inline=True)
+    e.add_field(name="⭐ Réputations", value=(f"🍺 Taverne : **{tav.get('label','Inconnu')}**\n🌑 Ruelle : **{criminal.get('label','Inconnu')}**\n🎰 Casino : **{casino.get('label','Visiteur')}**\n⚔️ Arène : **{arena.get('rank','Bronze')}** ({arena.get('rating',0)})"), inline=False)
+    e.add_field(name="🎒 Équipement", value=f"⛏️ Pioche niv. **{gear.pickaxe_level}** • 🪓 Hache niv. **{gear.axe_level}** • 🗡️ Lance niv. **{gear.spear_level}** • 🎒 Sac niv. **{gear.bag_level}**", inline=False)
+    if active:
+        zone = EXPEDITIONS.get(active.expedition_key, {})
+        state = "terminée, à récupérer" if active.finished else f"encore {format_duration(active.remaining_seconds)}"
+        e.add_field(name="🧭 Expédition", value=f"{zone.get('emoji','🗺️')} **{zone.get('name','Terres sauvages')}** — {state}", inline=False)
+    e.set_footer(text="Altherya • Ta légende appartient au monde d’Elyndor")
+    return e
+
+@bot.tree.command(name="profil", description="Affiche ta fiche d’aventurier Altherya")
+async def profil(interaction: discord.Interaction, joueur: discord.Member | None = None):
+    member = joueur or interaction.user
+    if not isinstance(member, discord.Member):
+        await interaction.response.send_message("❌ Profil indisponible.", ephemeral=True)
+        return
+    await interaction.response.send_message(embed=_player_profile_embed(member), ephemeral=False)
+
 @bot.tree.command(name="admin", description="Ouvre le panneau d'administration de Altherya")
 async def admin(interaction: discord.Interaction):
     # V1.67.2 — ACK immédiat : évite les 10062/40060 si SQLite ou Discord prend > 3 s.
@@ -6065,6 +6107,48 @@ ODDIUM_BRIDGE = OddiumBridgeServer(
     event_handler=_oddium_bridge_event,
 )
 ODDIUM_BRIDGE_STARTED = False
+_COMMAND_TREE_SYNCED = False
+
+
+async def _altherya_setup_hook():
+    """Synchronise l'arbre applicatif avant la connexion au Gateway.
+
+    V2.02 : la synchro dans on_ready() pouvait laisser Discord afficher une
+    commande distante alors que l'arbre de l'instance n'était pas encore dans
+    un état déterministe au moment des premières interactions. setup_hook est
+    le point prévu par discord.py pour cette initialisation.
+    """
+    global _COMMAND_TREE_SYNCED
+    local_names = sorted(command.name for command in bot.tree.get_commands())
+    print(f"[COMMANDES] Arbre local chargé ({len(local_names)}) : {', '.join(local_names)}")
+    if bot.tree.get_command("altherya") is None:
+        raise RuntimeError("Commande critique /altherya absente de l'arbre local avant synchronisation")
+
+    try:
+        if GUILD_ID:
+            guild = discord.Object(id=int(GUILD_ID))
+            bot.tree.copy_global_to(guild=guild)
+            synced = await bot.tree.sync(guild=guild)
+            scope = f"serveur {GUILD_ID}"
+        else:
+            synced = await bot.tree.sync()
+            scope = "global"
+        synced_names = sorted(command.name for command in synced)
+        _COMMAND_TREE_SYNCED = True
+        print(f"✅ Commandes {scope} synchronisées ({len(synced_names)}) : {', '.join(synced_names)}")
+        if "altherya" not in synced_names:
+            raise RuntimeError("Discord n'a pas retourné /altherya après la synchronisation")
+        print("✅ /altherya confirmée dans l'arbre Discord synchronisé")
+    except Exception as exc:
+        _COMMAND_TREE_SYNCED = False
+        print(f"❌ Synchronisation des commandes au démarrage : {type(exc).__name__}: {exc}")
+        raise
+
+
+# discord.py appelle setup_hook une seule fois, avant on_ready et avant le
+# traitement normal des interactions Gateway. Affectation volontaire à
+# l'instance afin de conserver l'architecture historique du projet.
+bot.setup_hook = _altherya_setup_hook
 
 
 @bot.event
@@ -6117,17 +6201,11 @@ async def on_ready():
     # Views de retour persistantes pour chaque lieu
     for key in DESTINATIONS:
         bot.add_view(PlaceView(key))
-    try:
-        if GUILD_ID:
-            guild = discord.Object(id=int(GUILD_ID))
-            bot.tree.copy_global_to(guild=guild)
-            await bot.tree.sync(guild=guild)
-            print(f"✅ Commandes synchronisées sur le serveur {GUILD_ID}")
-        else:
-            await bot.tree.sync()
-            print("✅ Commandes globales synchronisées")
-    except Exception as e:
-        print("❌ Synchronisation:", e)
+    # V2.02 : l'arbre de commandes est déjà synchronisé dans setup_hook(),
+    # avant la connexion au Gateway. Ne jamais resynchroniser ici : on_ready
+    # peut être rappelé après une reconnexion Discord.
+    if not _COMMAND_TREE_SYNCED:
+        print("⚠️ Arbre de commandes non confirmé comme synchronisé.")
     # Le message du Hub reste dans le salon entre les redémarrages.
     # On rattache simplement sa vue persistante si un Hub a déjà été installé.
     await ensure_fixed_hub()

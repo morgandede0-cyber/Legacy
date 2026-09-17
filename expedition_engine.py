@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 from progression import level_from_xp, FORGE_LEVEL_REQUIREMENTS, FORGE_GOLD_COSTS
+from world_engine import destination_name, destination_description
 
 
 # =========================
@@ -103,7 +104,8 @@ for _location_key, _location in LOCATION_META.items():
     for _idx in range(1, 6):
         _duration = _DESTINATION_DURATIONS[_idx - 1]
         EXPEDITIONS[f"{_location_key}_{_idx}"] = {
-            "name": f"Destination {_idx}",
+            "name": destination_name(f"{_location_key}_{_idx}"),
+            "description": destination_description(f"{_location_key}_{_idx}"),
             "location_key": _location_key,
             "location_name": _location["name"],
             "emoji": _location["emoji"],
