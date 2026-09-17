@@ -41,8 +41,20 @@ class AdminStore:
                 guild_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 granted_by INTEGER NOT NULL,
+                access_role TEXT NOT NULL DEFAULT 'admin',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY(guild_id,user_id)
+            )''')
+            # Migration douce des accès créés avant V1.69.
+            cols={r['name'] for r in c.execute('PRAGMA table_info(admin_access)').fetchall()}
+            if 'access_role' not in cols:
+                c.execute("ALTER TABLE admin_access ADD COLUMN access_role TEXT NOT NULL DEFAULT 'admin'")
+            c.execute('''CREATE TABLE IF NOT EXISTS admin_notes(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_id INTEGER NOT NULL,
+                admin_id INTEGER NOT NULL,
+                note TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )''')
             c.commit()
 
@@ -81,6 +93,53 @@ class AdminStore:
             c.execute('INSERT INTO admin_audit(admin_id,target_id,action,details) VALUES(?,?,?,?)',
                       (int(admin_id), int(target_id) if target_id is not None else None, str(action), str(details)))
             c.commit()
+
+    def admin_access_role(self, guild_id: int, user_id: int) -> str | None:
+        with self._c() as c:
+            row=c.execute('SELECT access_role FROM admin_access WHERE guild_id=? AND user_id=?',(int(guild_id),int(user_id))).fetchone()
+        return str(row['access_role']) if row else None
+
+    def set_admin_access_role(self, guild_id: int, user_id: int, role: str, admin_id: int):
+        role=str(role).lower().strip()
+        if role not in {'admin','moderator','gamemaster','viewer'}:
+            raise ValueError('Rôle admin invalide')
+        with self._c() as c:
+            c.execute('UPDATE admin_access SET access_role=? WHERE guild_id=? AND user_id=?',(role,int(guild_id),int(user_id)))
+            c.commit()
+        self.log(admin_id,user_id,'admin_access_role',f'guild_id={guild_id} role={role}')
+
+    def add_note(self, target_id: int, admin_id: int, note: str):
+        note=str(note).strip()[:1000]
+        if not note: raise ValueError('Note vide')
+        with self._c() as c:
+            c.execute('INSERT INTO admin_notes(target_id,admin_id,note) VALUES(?,?,?)',(int(target_id),int(admin_id),note)); c.commit()
+        self.log(admin_id,target_id,'staff_note',note)
+
+    def notes(self, target_id: int, limit: int = 5):
+        with self._c() as c:
+            return c.execute('SELECT admin_id,note,created_at FROM admin_notes WHERE target_id=? ORDER BY id DESC LIMIT ?',(int(target_id),int(limit))).fetchall()
+
+    def recent_audit(self, target_id: int, limit: int = 8):
+        with self._c() as c:
+            return c.execute('SELECT admin_id,action,details,created_at FROM admin_audit WHERE target_id=? ORDER BY id DESC LIMIT ?',(int(target_id),int(limit))).fetchall()
+
+    def server_snapshot(self) -> dict:
+        out={'players':0,'wallet':0,'bank':0,'admins':0,'audit':0}
+        with self._c() as c:
+            try:
+                r=c.execute('SELECT COUNT(*) n,COALESCE(SUM(wallet_gold),0) w,COALESCE(SUM(bank_gold),0) b FROM players').fetchone(); out.update(players=int(r['n']),wallet=int(r['w']),bank=int(r['b']))
+            except sqlite3.OperationalError: pass
+            out['admins']=int(c.execute('SELECT COUNT(*) n FROM admin_access').fetchone()['n'])
+            out['audit']=int(c.execute('SELECT COUNT(*) n FROM admin_audit').fetchone()['n'])
+        return out
+
+    def adjust_bank_gold(self, user_id: int, delta: int) -> tuple[int,int]:
+        uid,delta=int(user_id),int(delta)
+        with self._c() as c:
+            c.execute('BEGIN IMMEDIATE'); c.execute('INSERT OR IGNORE INTO players(user_id) VALUES(?)',(uid,))
+            row=c.execute('SELECT bank_gold FROM players WHERE user_id=?',(uid,)).fetchone(); old=int(row['bank_gold']); new=max(0,old+delta)
+            c.execute('UPDATE players SET bank_gold=? WHERE user_id=?',(new,uid)); c.commit()
+        return old,new
 
     def event_enabled(self, key: str) -> bool:
         with self._c() as c:

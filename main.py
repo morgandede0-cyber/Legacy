@@ -5525,6 +5525,9 @@ async def _admin_profile_embed(interaction: discord.Interaction, target_id: int)
     e.add_field(name='🐺 Ruelle',value=f'**{criminal["label"]}**\n{criminal["successes"]} méfait(s)',inline=True)
     e.add_field(name='🎰 Casino',value=f'**{casino["label"]}**\n{casino["wins"]} victoire(s)',inline=True)
     e.add_field(name='⚔️ Arène',value=f'Rang **{arena["rank"]}** • cote **{arena["rating"]}**\nChampion niv. **{arena["champion_level"]}/10** • {arena["champion_wins"]} victoire(s)',inline=False)
+    notes=ADMIN_STORE.notes(target_id,3)
+    if notes:
+        e.add_field(name='📝 Notes staff privées',value='\n'.join(f'• {str(n["note"])[:120]}' for n in notes),inline=False)
     e.set_footer(text='Altherya Admin • Fiche joueur • Les boutons ci-dessous modifient directement ce joueur')
     return e
 
@@ -5536,10 +5539,43 @@ async def show_admin_player_profile(interaction: discord.Interaction,target_id:i
     else:
         await interaction.response.edit_message(content=None,embed=embed,view=view)
 
+
+class AdminStaffNoteModal(discord.ui.Modal):
+    def __init__(self,target_id:int):
+        super().__init__(title='Note staff privée'); self.target_id=int(target_id)
+        self.note=discord.ui.TextInput(label='Note',style=discord.TextStyle.paragraph,placeholder='Ex: remboursement manuel après bug...',max_length=1000)
+        self.add_item(self.note)
+    async def on_submit(self,i):
+        if not await _admin_guard(i): return
+        ADMIN_STORE.add_note(self.target_id,i.user.id,self.note.value)
+        await i.response.send_message('✅ Note staff ajoutée à la fiche du joueur.',ephemeral=True)
+
+class AdminPlayerHistoryView(discord.ui.View):
+    def __init__(self,target_id:int):
+        super().__init__(timeout=180); self.target_id=int(target_id)
+        back=discord.ui.Button(label='Retour fiche',emoji='↩️',style=discord.ButtonStyle.primary)
+        async def cb(i):
+            if await _admin_guard(i): await show_admin_player_profile(i,self.target_id)
+        back.callback=cb; self.add_item(back)
+
+async def show_admin_player_history(i: discord.Interaction,target_id:int):
+    member=await _get_member(i,target_id); name=member.display_name if member else str(target_id)
+    rows=ADMIN_STORE.recent_audit(target_id,10)
+    lines=[]
+    labels={'gold_add':'Gold ajouté','gold_remove':'Gold retiré','level_adjust':'Niveau modifié','profile_stat':'Profil modifié','staff_note':'Note staff','mute_temp':'Mute temporaire','mute_perm':'Mute permanent','unmute':'Unmute','kick':'Kick','ban':'Ban'}
+    for r in rows:
+        when=str(r['created_at'])[5:16].replace('T',' '); action=labels.get(str(r['action']),str(r['action']).replace('_',' ').title())
+        detail=(str(r['details'] or '')[:90])
+        lines.append(f'`{when}` **{action}** par <@{int(r["admin_id"])}>\n↳ {detail or "—"}')
+    e=discord.Embed(title=f'📜 Historique administratif — {name}',description='\n\n'.join(lines) if lines else '*Aucune action administrative enregistrée.*',color=discord.Color.dark_gold())
+    if member: e.set_thumbnail(url=member.display_avatar.url)
+    e.set_footer(text='Altherya Admin • Traçabilité staff')
+    await i.response.edit_message(content=None,embed=e,view=AdminPlayerHistoryView(target_id))
+
 class AdminPlayerProfileView(discord.ui.View):
     def __init__(self,target_id:int):
         super().__init__(timeout=300); self.target_id=int(target_id)
-        specs=[('money','Gold','💰',discord.ButtonStyle.success),('level','Niveau','📈',discord.ButtonStyle.primary),('reputation','Réputations','⭐',discord.ButtonStyle.primary),('items','Items','🎒',discord.ButtonStyle.secondary),('success','Succès','🏆',discord.ButtonStyle.secondary),('moderation','Modération','🛡️',discord.ButtonStyle.danger)]
+        specs=[('money','Économie','💰',discord.ButtonStyle.success),('level','Progression','📈',discord.ButtonStyle.primary),('reputation','Réputations','⭐',discord.ButtonStyle.primary),('items','Inventaire','🎒',discord.ButtonStyle.secondary),('success','Succès','🏆',discord.ButtonStyle.secondary),('history','Historique','📜',discord.ButtonStyle.secondary),('note','Note staff','📝',discord.ButtonStyle.secondary),('moderation','Modération','🛡️',discord.ButtonStyle.danger)]
         for action,label,emoji,style in specs:
             b=discord.ui.Button(label=label,emoji=emoji,style=style)
             async def cb(i,a=action):
@@ -5549,6 +5585,10 @@ class AdminPlayerProfileView(discord.ui.View):
                 elif a=='reputation': view=AdminReputationView(self.target_id); text='⭐ **Modifier les réputations / progression**\nTaverne • Ruelle • Arène • Champion • Fidélité Casino.'
                 elif a=='items': view=AdminItemView(self.target_id); text='🎒 **Modifier les items / équipements**'
                 elif a=='moderation': view=AdminModerationView(self.target_id); text='🛡️ **Modération du joueur**'
+                elif a=='history':
+                    await show_admin_player_history(i,self.target_id); return
+                elif a=='note':
+                    await i.response.send_modal(AdminStaffNoteModal(self.target_id)); return
                 else:
                     view=AdminSuccessActionForPlayerView(self.target_id); text='🏆 **Modifier les succès**'
                 await i.response.edit_message(content=text,embed=None,view=view)
@@ -5603,11 +5643,13 @@ class AdminServerView(discord.ui.View):
 
 def admin_home_embed():
     gold='🟢 ON' if ADMIN_STORE.event_enabled('gold_x2') else '⚫ OFF'; xp='🟢 ON' if ADMIN_STORE.event_enabled('xp_x2') else '⚫ OFF'
-    cooldowns='🟢 ON' if ADMIN_STORE.cooldowns_enabled() else '🔴 OFF'
-    e=discord.Embed(title="🛡️ Administration — Altherya",description="Choisis une catégorie. **Serveur** et **Joueurs** sont maintenant totalement séparés.",color=discord.Color.dark_gold())
-    e.add_field(name='🖥️ SERVEUR',value=f'Configuration globale • événements • cooldowns • accès `/admin`\nGold x2 **{gold}** • XP x2 **{xp}** • Cooldowns **{cooldowns}**',inline=False)
-    e.add_field(name='👥 JOUEURS',value='Sélection d’un membre → **fiche profil complète** → modification du Gold, niveau, réputations, items, succès et modération.',inline=False)
-    e.set_footer(text='Altherya Admin • Toutes les modifications sont privées et journalisées')
+    cooldowns='🟢 ON' if ADMIN_STORE.cooldowns_enabled() else '🔴 OFF'; snap=ADMIN_STORE.server_snapshot()
+    e=discord.Embed(title="🏰 ALTHERYA • CENTRE DE COMMANDEMENT",description="Administration centrale du royaume. **Serveur** et **Joueurs** disposent chacun de leur espace dédié.",color=discord.Color.dark_gold())
+    e.add_field(name='📊 Vue d’ensemble',value=(f'Joueurs enregistrés : **{snap["players"]:,}**\nGold en circulation : **{snap["wallet"]:,}**\nGold en banque : **{snap["bank"]:,}**').replace(',',' '),inline=True)
+    e.add_field(name='🛡️ Administration',value=f'Accès délégués : **{snap["admins"]}**\nActions journalisées : **{snap["audit"]}**\nCooldowns : **{cooldowns}**',inline=True)
+    e.add_field(name='🖥️ SERVEUR',value=f'Événements • cooldowns • accès staff • supervision\nGold x2 **{gold}** • XP x2 **{xp}**',inline=False)
+    e.add_field(name='👥 JOUEURS',value='Fiche complète • économie • progression • réputations • inventaire • succès • historique • notes staff • modération.',inline=False)
+    e.set_footer(text='Altherya Admin • Centre de commandement • Actions sensibles journalisées')
     return e
 
 class AdminPanelView(discord.ui.View):
