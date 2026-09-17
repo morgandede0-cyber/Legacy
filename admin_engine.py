@@ -206,6 +206,34 @@ class AdminStore:
                 c.execute(f'UPDATE expedition_profiles SET {key}_level=1 WHERE user_id=?', (uid,))
             c.commit()
 
+    def set_profile_stat(self, user_id: int, stat: str, value: int) -> tuple[int, int]:
+        """V1.68 — édite les compteurs de profil administrables sans casser leurs tables métier."""
+        uid, value = int(user_id), max(0, int(value))
+        mapping = {
+            'tavern_drinks': ('tavern_reputation', 'drinks'),
+            'criminal_successes': ('criminal_reputation', 'successes'),
+            'arena_rating': ('arena_progress', 'rating'),
+            'arena_champion_wins': ('arena_progress', 'champion_wins'),
+            'casino_wins': ('casino_loyalty_admin', 'wins'),
+        }
+        if stat not in mapping:
+            raise ValueError(f'Statistique de profil inconnue: {stat}')
+        table, column = mapping[stat]
+        with self._c() as c:
+            c.execute('BEGIN IMMEDIATE')
+            if table == 'arena_progress':
+                c.execute('INSERT OR IGNORE INTO arena_progress(user_id,rating,champion_wins) VALUES(?,0,0)', (uid,))
+            elif table == 'casino_loyalty_admin':
+                c.execute('CREATE TABLE IF NOT EXISTS casino_loyalty_admin(user_id INTEGER PRIMARY KEY,wins INTEGER NOT NULL CHECK(wins >= 0))')
+                c.execute('INSERT OR IGNORE INTO casino_loyalty_admin(user_id,wins) VALUES(?,0)', (uid,))
+            else:
+                c.execute(f'INSERT OR IGNORE INTO {table}(user_id,{column}) VALUES(?,0)', (uid,))
+            row=c.execute(f'SELECT {column} FROM {table} WHERE user_id=?',(uid,)).fetchone()
+            old=int(row[column]) if row else 0
+            c.execute(f'UPDATE {table} SET {column}=? WHERE user_id=?',(value,uid))
+            c.commit()
+        return old, value
+
 
 def event_multiplier(db_path: str | Path, key: str) -> int:
     try:

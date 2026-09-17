@@ -78,6 +78,9 @@ class CasinoStore:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_casino_user_status ON casino_sessions(user_id,status)")
+            conn.execute("""CREATE TABLE IF NOT EXISTS casino_loyalty_admin (
+                user_id INTEGER PRIMARY KEY, wins INTEGER NOT NULL CHECK(wins >= 0)
+            )""")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS casino_stats (
                     user_id INTEGER NOT NULL,
@@ -98,11 +101,12 @@ class CasinoStore:
         # La fidélité progresse uniquement sur les parties GAGNÉES.
         # Une égalité/remboursement (payout == wager) ne compte pas comme victoire.
         with self._connect() as conn:
+            override = conn.execute("SELECT wins FROM casino_loyalty_admin WHERE user_id=?", (int(user_id),)).fetchone()
             row = conn.execute(
                 "SELECT COUNT(*) FROM casino_sessions WHERE user_id=? AND status='finished' AND payout>wager",
                 (int(user_id),),
             ).fetchone()
-        wins = int(row[0]) if row else 0
+        wins = int(override[0]) if override is not None else (int(row[0]) if row else 0)
         label = "Visiteur"
         if wins >= CASINO_VIP_WINS: label = "VIP"
         elif wins >= CASINO_HABITUE_WINS: label = "Habitué"

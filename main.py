@@ -5465,36 +5465,161 @@ class AdminAccessView(discord.ui.View):
         add.callback=add_cb; remove.callback=remove_cb; listing.callback=list_cb
         self.add_item(add); self.add_item(remove); self.add_item(listing)
 
-class AdminPanelView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-        data=[
-            ('money','Argent','💰',discord.ButtonStyle.success),('level','Niveaux','📈',discord.ButtonStyle.primary),
-            ('events','Événements','🎉',discord.ButtonStyle.primary),('moderation','Modération','🛡️',discord.ButtonStyle.danger),
-            ('success','Succès','🏆',discord.ButtonStyle.secondary),('items','Items','🎒',discord.ButtonStyle.secondary),
-            ('cooldowns','Cooldowns','⏱️',discord.ButtonStyle.secondary),
-            ('access','Accès /admin','👥',discord.ButtonStyle.secondary)
-        ]
-        for action,label,emoji,style in data:
+class AdminProfileStatModal(discord.ui.Modal):
+    LABELS = {
+        'tavern_drinks': 'Consommations Taverne',
+        'criminal_successes': 'Méfaits réussis Ruelle',
+        'arena_rating': 'Cote Arène',
+        'arena_champion_wins': 'Victoires Champion',
+        'casino_wins': 'Victoires Casino / fidélité',
+    }
+    def __init__(self, target_id: int, stat: str):
+        super().__init__(title=f"Modifier • {self.LABELS[stat]}")
+        self.target_id=int(target_id); self.stat=stat
+        self.value=discord.ui.TextInput(label=self.LABELS[stat],placeholder="Nouvelle valeur (0 ou plus)",max_length=9)
+        self.add_item(self.value)
+    async def on_submit(self,i: discord.Interaction):
+        if not await _admin_guard(i): return
+        try: value=int(str(self.value.value).replace(' ',''))
+        except ValueError:
+            await i.response.send_message("❌ Valeur invalide.",ephemeral=True); return
+        if value < 0:
+            await i.response.send_message("❌ La valeur ne peut pas être négative.",ephemeral=True); return
+        old,new=ADMIN_STORE.set_profile_stat(self.target_id,self.stat,value)
+        ADMIN_STORE.log(i.user.id,self.target_id,'profile_stat',f'{self.stat}: {old}->{new}')
+        member=await _get_member(i,self.target_id)
+        if member:
+            await announce_player_log(i.guild,member,f"Profil modifié par {i.user.display_name}",category="Administration",details=f"{self.LABELS[self.stat]} : {old} → {new}")
+        await i.response.send_message(f"✅ **{self.LABELS[self.stat]}** : {old} → **{new}**.",ephemeral=True)
+
+class AdminReputationView(discord.ui.View):
+    def __init__(self,target_id:int):
+        super().__init__(timeout=180); self.target_id=int(target_id)
+        specs=[
+            ('tavern_drinks','Taverne','🍺'),('criminal_successes','Ruelle','🐺'),
+            ('arena_rating','Cote Arène','⚔️'),('arena_champion_wins','Champion','👑'),('casino_wins','Casino','🎰')]
+        for stat,label,emoji in specs:
+            b=discord.ui.Button(label=label,emoji=emoji,style=discord.ButtonStyle.secondary)
+            async def cb(i,st=stat):
+                if await _admin_guard(i): await i.response.send_modal(AdminProfileStatModal(self.target_id,st))
+            b.callback=cb; self.add_item(b)
+        back=discord.ui.Button(label='Retour fiche',emoji='↩️',style=discord.ButtonStyle.primary)
+        async def back_cb(i):
+            if not await _admin_guard(i): return
+            await show_admin_player_profile(i,self.target_id)
+        back.callback=back_cb; self.add_item(back)
+
+async def _admin_profile_embed(interaction: discord.Interaction, target_id: int) -> discord.Embed:
+    member=await _get_member(interaction,target_id)
+    name=member.display_name if member else f'Joueur {target_id}'
+    p=CASTLE_STORE.profile(target_id); lvl,cur,need=level_from_xp(p['xp']); bal=ECONOMY.get_balance(target_id)
+    arena=ARENA_STORE.progress(target_id); tav=TAVERN_STORE.tavern_reputation(target_id)
+    criminal=DARK_STORE.criminal_reputation(target_id); casino=CASINO_STORE.loyalty(target_id)
+    achievements=len(ACHIEVEMENT_STORE.unlocked_keys(target_id))
+    e=discord.Embed(title=f'👤 Administration joueur — {name}',description=f'**ID Discord :** `{target_id}`\n⭐ **Niveau {lvl}** • XP **{cur}/{need}**',color=discord.Color.dark_gold())
+    if member: e.set_thumbnail(url=member.display_avatar.url)
+    e.add_field(name='💰 Économie',value=f'Poche : **{bal.wallet:,} Gold**\nBanque : **{bal.bank:,} Gold**\nTotal : **{bal.wallet+bal.bank:,} Gold**'.replace(',',' '),inline=True)
+    e.add_field(name='🏰 Activité',value=f'Combats : **{p["combats"]}** • {p["wins"]} V / {p["losses"]} D\nExpéditions : **{p["expeditions"]}**\nCasino : **{p["casino_games"]}**\nQuêtes : **{p["quests_completed"]}**',inline=True)
+    e.add_field(name='🏆 Progression',value=f'Succès : **{achievements}**\nMembre depuis : **{str(p["member_since"])[:10]}**',inline=True)
+    e.add_field(name='🍺 Taverne',value=f'**{tav["label"]}**\n{tav["drinks"]} consommation(s)',inline=True)
+    e.add_field(name='🐺 Ruelle',value=f'**{criminal["label"]}**\n{criminal["successes"]} méfait(s)',inline=True)
+    e.add_field(name='🎰 Casino',value=f'**{casino["label"]}**\n{casino["wins"]} victoire(s)',inline=True)
+    e.add_field(name='⚔️ Arène',value=f'Rang **{arena["rank"]}** • cote **{arena["rating"]}**\nChampion niv. **{arena["champion_level"]}/10** • {arena["champion_wins"]} victoire(s)',inline=False)
+    e.set_footer(text='Altherya Admin • Fiche joueur • Les boutons ci-dessous modifient directement ce joueur')
+    return e
+
+async def show_admin_player_profile(interaction: discord.Interaction,target_id:int):
+    embed=await _admin_profile_embed(interaction,int(target_id))
+    view=AdminPlayerProfileView(int(target_id))
+    if interaction.response.is_done():
+        await interaction.edit_original_response(content=None,embed=embed,view=view)
+    else:
+        await interaction.response.edit_message(content=None,embed=embed,view=view)
+
+class AdminPlayerProfileView(discord.ui.View):
+    def __init__(self,target_id:int):
+        super().__init__(timeout=300); self.target_id=int(target_id)
+        specs=[('money','Gold','💰',discord.ButtonStyle.success),('level','Niveau','📈',discord.ButtonStyle.primary),('reputation','Réputations','⭐',discord.ButtonStyle.primary),('items','Items','🎒',discord.ButtonStyle.secondary),('success','Succès','🏆',discord.ButtonStyle.secondary),('moderation','Modération','🛡️',discord.ButtonStyle.danger)]
+        for action,label,emoji,style in specs:
             b=discord.ui.Button(label=label,emoji=emoji,style=style)
             async def cb(i,a=action):
                 if not await _admin_guard(i): return
-                if a=='events':
-                    await i.response.send_message("🎉 **Gestion des événements**",view=AdminEventsView(),ephemeral=True)
-                elif a=='success':
-                    await i.response.send_message("🏆 **Gestion des succès**",view=AdminSuccessActionView(),ephemeral=True)
-                elif a=='cooldowns':
-                    state='ACTIVÉS' if ADMIN_STORE.cooldowns_enabled() else 'DÉSACTIVÉS'
-                    await i.response.send_message(f"⏱️ **Gestion des cooldowns**\nÉtat global : **{state}**",view=AdminCooldownView(),ephemeral=True)
-                elif a=='access':
-                    if not _native_admin_ok(i):
-                        await i.response.send_message("❌ Seul un administrateur Discord peut gérer les accès `/admin`.",ephemeral=True)
-                    else:
-                        await i.response.send_message("👥 **Gestion des accès `/admin`**\nAjoute ou retire les joueurs autorisés à administrer Altherya.",view=AdminAccessView(),ephemeral=True)
+                if a=='money': view=AdminMoneyView(self.target_id); text='💰 **Modifier le Gold**'
+                elif a=='level': view=AdminLevelView(self.target_id); text='📈 **Modifier le niveau**'
+                elif a=='reputation': view=AdminReputationView(self.target_id); text='⭐ **Modifier les réputations / progression**\nTaverne • Ruelle • Arène • Champion • Fidélité Casino.'
+                elif a=='items': view=AdminItemView(self.target_id); text='🎒 **Modifier les items / équipements**'
+                elif a=='moderation': view=AdminModerationView(self.target_id); text='🛡️ **Modération du joueur**'
                 else:
-                    title={'money':'💰 Argent','level':'📈 Niveaux','moderation':'🛡️ Modération','items':'🎒 Items'}[a]
-                    await i.response.send_message(f"{title} — sélectionne un joueur.",view=AdminTargetView(a),ephemeral=True)
+                    view=AdminSuccessActionForPlayerView(self.target_id); text='🏆 **Modifier les succès**'
+                await i.response.edit_message(content=text,embed=None,view=view)
             b.callback=cb; self.add_item(b)
+        back=discord.ui.Button(label='Joueurs',emoji='↩️',style=discord.ButtonStyle.secondary)
+        async def back_cb(i):
+            if await _admin_guard(i): await i.response.edit_message(content='👥 **Administration des joueurs**\nSélectionne un joueur pour ouvrir sa fiche complète.',embed=None,view=AdminPlayersView())
+        back.callback=back_cb; self.add_item(back)
+
+class AdminSuccessActionForPlayerView(discord.ui.View):
+    def __init__(self,target_id:int):
+        super().__init__(timeout=180); self.target_id=int(target_id)
+        u=discord.ui.Button(label='Débloquer',emoji='🏆',style=discord.ButtonStyle.success)
+        r=discord.ui.Button(label='Supprimer',emoji='🗑️',style=discord.ButtonStyle.danger)
+        async def uc(i):
+            if await _admin_guard(i): await i.response.edit_message(content='🏆 Choisis le succès à débloquer.',view=AdminAchievementView(self.target_id,'unlock'))
+        async def rc(i):
+            if await _admin_guard(i): await i.response.edit_message(content='🗑️ Choisis le succès à retirer.',view=AdminAchievementView(self.target_id,'remove'))
+        u.callback=uc; r.callback=rc; self.add_item(u); self.add_item(r)
+
+class AdminPlayerProfileSelect(discord.ui.UserSelect):
+    def __init__(self): super().__init__(placeholder='Sélectionner un joueur...',min_values=1,max_values=1)
+    async def callback(self,i):
+        if not await _admin_guard(i): return
+        await show_admin_player_profile(i,int(self.values[0].id))
+
+class AdminPlayersView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300); self.add_item(AdminPlayerProfileSelect())
+        back=discord.ui.Button(label='Retour catégories',emoji='↩️',style=discord.ButtonStyle.secondary)
+        async def cb(i):
+            if await _admin_guard(i): await i.response.edit_message(content=None,embed=admin_home_embed(),view=AdminPanelView())
+        back.callback=cb; self.add_item(back)
+
+class AdminServerView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        specs=[('events','Événements','🎉'),('cooldowns','Cooldowns','⏱️'),('access','Accès /admin','👥')]
+        for action,label,emoji in specs:
+            b=discord.ui.Button(label=label,emoji=emoji,style=discord.ButtonStyle.primary if action!='access' else discord.ButtonStyle.secondary)
+            async def cb(i,a=action):
+                if not await _admin_guard(i): return
+                if a=='events': await i.response.edit_message(content='🎉 **Gestion serveur • Événements**',embed=None,view=AdminEventsView())
+                elif a=='cooldowns': await i.response.edit_message(content='⏱️ **Gestion serveur • Cooldowns**',embed=None,view=AdminCooldownView())
+                elif not _native_admin_ok(i): await i.response.send_message('❌ Seul un administrateur Discord peut gérer les accès `/admin`.',ephemeral=True)
+                else: await i.response.edit_message(content='👥 **Gestion serveur • Accès /admin**',embed=None,view=AdminAccessView())
+            b.callback=cb; self.add_item(b)
+        back=discord.ui.Button(label='Retour catégories',emoji='↩️',style=discord.ButtonStyle.secondary)
+        async def back_cb(i):
+            if await _admin_guard(i): await i.response.edit_message(content=None,embed=admin_home_embed(),view=AdminPanelView())
+        back.callback=back_cb; self.add_item(back)
+
+def admin_home_embed():
+    gold='🟢 ON' if ADMIN_STORE.event_enabled('gold_x2') else '⚫ OFF'; xp='🟢 ON' if ADMIN_STORE.event_enabled('xp_x2') else '⚫ OFF'
+    cooldowns='🟢 ON' if ADMIN_STORE.cooldowns_enabled() else '🔴 OFF'
+    e=discord.Embed(title="🛡️ Administration — Altherya",description="Choisis une catégorie. **Serveur** et **Joueurs** sont maintenant totalement séparés.",color=discord.Color.dark_gold())
+    e.add_field(name='🖥️ SERVEUR',value=f'Configuration globale • événements • cooldowns • accès `/admin`\nGold x2 **{gold}** • XP x2 **{xp}** • Cooldowns **{cooldowns}**',inline=False)
+    e.add_field(name='👥 JOUEURS',value='Sélection d’un membre → **fiche profil complète** → modification du Gold, niveau, réputations, items, succès et modération.',inline=False)
+    e.set_footer(text='Altherya Admin • Toutes les modifications sont privées et journalisées')
+    return e
+
+class AdminPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        server=discord.ui.Button(label='Serveur',emoji='🖥️',style=discord.ButtonStyle.primary)
+        players=discord.ui.Button(label='Joueurs',emoji='👥',style=discord.ButtonStyle.success)
+        async def server_cb(i):
+            if await _admin_guard(i): await i.response.edit_message(content='🖥️ **ADMINISTRATION SERVEUR**',embed=None,view=AdminServerView())
+        async def players_cb(i):
+            if await _admin_guard(i): await i.response.edit_message(content='👥 **ADMINISTRATION DES JOUEURS**\nSélectionne un joueur pour ouvrir sa fiche complète.',embed=None,view=AdminPlayersView())
+        server.callback=server_cb; players.callback=players_cb; self.add_item(server); self.add_item(players)
 
 @bot.tree.command(name="admin", description="Ouvre le panneau d'administration de Altherya")
 async def admin(interaction: discord.Interaction):
@@ -5511,15 +5636,7 @@ async def admin(interaction: discord.Interaction):
         await interaction.followup.send("❌ Ce panneau est réservé aux **administrateurs autorisés**.", ephemeral=True)
         return
 
-    gold='🟢 ON' if ADMIN_STORE.event_enabled('gold_x2') else '⚫ OFF'
-    xp='🟢 ON' if ADMIN_STORE.event_enabled('xp_x2') else '⚫ OFF'
-    embed=discord.Embed(title="🛡️ Panneau d'administration — Altherya",description="Gestion du bot et des joueurs. Toutes les actions sont privées et journalisées.",color=discord.Color.dark_gold())
-    embed.add_field(name="Événements",value=f"💰 Gold x2 : **{gold}**\n✨ XP x2 : **{xp}**",inline=False)
-    cooldowns='🟢 ON' if ADMIN_STORE.cooldowns_enabled() else '🔴 OFF'
-    embed.add_field(name="Cooldowns",value=f"⏱️ Cooldowns globaux : **{cooldowns}**",inline=False)
-    embed.add_field(name="Outils",value="💰 Argent • 📈 Niveaux • 🎉 Événements • 🛡️ Modération • 🏆 Succès • 🎒 Items • ⏱️ Cooldowns • 👥 Accès /admin",inline=False)
-    embed.set_footer(text="Altherya Admin • administrateurs Discord + joueurs autorisés")
-    await interaction.followup.send(embed=embed, view=AdminPanelView(), ephemeral=True)
+    await interaction.followup.send(embed=admin_home_embed(), view=AdminPanelView(), ephemeral=True)
 
 @admin.error
 async def admin_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
