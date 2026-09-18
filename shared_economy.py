@@ -75,6 +75,26 @@ def migrate_legacy_wallets(db_path: str|Path):
             pg.commit(); return imported
         finally: sq.close()
 
+
+# One-time recovery of the known pre-shared Altherya wallet.
+# Safe/idempotent: it only seeds an existing/new zero wallet when that user has
+# never had a shared-economy transaction. Once seeded (or once any transaction
+# exists), this code can never overwrite the live shared balance.
+def recover_known_legacy_wallet(user_id:int, legacy_balance:int)->bool:
+    if not enabled(): return False
+    init_schema(); uid=int(user_id); legacy_balance=max(0,int(legacy_balance))
+    if legacy_balance <= 0: return False
+    with _LOCK, _pg() as c:
+        c.execute('INSERT INTO economy_wallets(user_id,balance) VALUES(%s,0) ON CONFLICT DO NOTHING',(uid,))
+        row=c.execute('SELECT balance FROM economy_wallets WHERE user_id=%s FOR UPDATE',(uid,)).fetchone()
+        has_tx=c.execute('SELECT 1 FROM economy_transactions WHERE user_id=%s LIMIT 1',(uid,)).fetchone()
+        if int(row[0]) != 0 or has_tx:
+            c.rollback(); return False
+        c.execute('UPDATE economy_wallets SET balance=%s,updated_at=NOW() WHERE user_id=%s',(legacy_balance,uid))
+        c.execute('INSERT INTO economy_transactions(source,reference,user_id,amount,reason) VALUES(%s,%s,%s,%s,%s)',
+                  ('ALTHERYA','legacy-wallet-recovery-v1',uid,legacy_balance,'LEGACY_RECOVERY'))
+        c.commit(); return True
+
 def get_balance(user_id:int)->int:
     init_schema()
     with _LOCK, _pg() as c:

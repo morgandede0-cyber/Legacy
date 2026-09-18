@@ -14,8 +14,11 @@ DATA = BASE / "data"
 from shared_economy import (
     migrate_legacy_wallets, pending_events, mark_event_processed,
     enabled as shared_economy_enabled, diagnostics as shared_economy_diagnostics,
+    recover_known_legacy_wallet,
 )
 MIGRATED_GOLD_PLAYERS = migrate_legacy_wallets(DATA / "legacy.sqlite3")
+# Recovery unique du solde Altherya historique constaté avant le passage au wallet partagé.
+RECOVERED_LEGACY_WALLET = recover_known_legacy_wallet(666805849011912705, 101000643)
 
 import discord
 from discord.ext import commands, tasks
@@ -50,7 +53,7 @@ EXPEDITION_LIVE_ASSETS.mkdir(parents=True, exist_ok=True)
 HUB_STATE_FILE = DATA / "hub_message.json"
 if shared_economy_enabled():
     _eco_diag = shared_economy_diagnostics()
-    print(f"[ECONOMIE COMMUNE] PostgreSQL actif • migration initiale: {MIGRATED_GOLD_PLAYERS} joueur(s) • db={_eco_diag['database']} • host={_eco_diag['host']}:{_eco_diag['port']} • wallets={_eco_diag['wallets']} • empreinte={_eco_diag['fingerprint']}")
+    print(f"[ECONOMIE COMMUNE] PostgreSQL actif • migration initiale: {MIGRATED_GOLD_PLAYERS} joueur(s) • récupération historique: {'oui' if RECOVERED_LEGACY_WALLET else 'non'} • db={_eco_diag['database']} • host={_eco_diag['host']}:{_eco_diag['port']} • wallets={_eco_diag['wallets']} • empreinte={_eco_diag['fingerprint']}")
 else:
     print("[ECONOMIE COMMUNE] désactivée : ECONOMY_DATABASE_URL absente")
 ECONOMY = Economy(DATA / "legacy.sqlite3")
