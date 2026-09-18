@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, sqlite3, threading, uuid
+import hashlib, json, os, sqlite3, threading, uuid
 from pathlib import Path
 
 try:
@@ -7,20 +7,21 @@ try:
 except Exception:
     psycopg = None
 
-_URL = os.getenv('ECONOMY_DATABASE_URL','').strip()
+def _url(): return os.getenv('ECONOMY_DATABASE_URL','').strip()
 _LOCK = threading.RLock()
 
 class SharedEconomyError(RuntimeError): pass
 class SharedEconomyInsufficientFunds(SharedEconomyError): pass
 
-def enabled(): return bool(_URL)
+def enabled(): return bool(_url())
 
 def _pg():
-    if not _URL:
+    url=_url()
+    if not url:
         raise SharedEconomyError('ECONOMY_DATABASE_URL absente')
     if psycopg is None:
         raise SharedEconomyError('psycopg indisponible')
-    return psycopg.connect(_URL, autocommit=False)
+    return psycopg.connect(url, autocommit=False)
 
 def init_schema():
     if not enabled(): return
@@ -36,6 +37,14 @@ def init_schema():
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), processed_at TIMESTAMPTZ)''')
         c.execute('''CREATE TABLE IF NOT EXISTS economy_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())''')
         c.commit()
+
+def diagnostics():
+    if not enabled(): return None
+    init_schema()
+    with _LOCK, _pg() as c:
+        row=c.execute("SELECT current_database(), current_user, inet_server_addr()::text, inet_server_port()").fetchone()
+        count=int(c.execute("SELECT COUNT(*) FROM economy_wallets").fetchone()[0]); c.commit()
+    return {"database":str(row[0]),"user":str(row[1]),"host":str(row[2]),"port":int(row[3]),"wallets":count,"fingerprint":hashlib.sha256(_url().encode("utf-8")).hexdigest()[:12]}
 
 def migrate_legacy_wallets(db_path: str|Path):
     """Bootstrap PostgreSQL from Altherya SQLite without overwriting live shared balances.

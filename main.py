@@ -28,14 +28,10 @@ from job_board_engine import JobBoardStore, RARITIES as JOB_RARITIES
 import legacy_world_forge as WORLD_FORGE
 import tower_engine as TOWER
 from world_engine import current_event, destination_name, destination_description
-from shared_economy import migrate_legacy_wallets, pending_events, mark_event_processed, enabled as shared_economy_enabled
-
 load_dotenv()
+from shared_economy import migrate_legacy_wallets, pending_events, mark_event_processed, enabled as shared_economy_enabled, diagnostics as shared_economy_diagnostics
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 GUILD_ID = os.getenv("GUILD_ID", "").strip()
-ALTHERYA_BRIDGE_TOKEN = os.getenv("ALTHERYA_BRIDGE_TOKEN", "").strip()
-ALTHERYA_BRIDGE_HOST = os.getenv("ALTHERYA_BRIDGE_HOST", "0.0.0.0").strip()
-ALTHERYA_BRIDGE_PORT = int(os.getenv("ALTHERYA_BRIDGE_PORT", "8787"))
 BASE = Path(__file__).resolve().parent
 PLACES = BASE / "assets" / "places"
 TRANSITIONS = BASE / "assets" / "transitions"
@@ -45,7 +41,8 @@ EXPEDITION_LIVE_ASSETS.mkdir(parents=True, exist_ok=True)
 HUB_STATE_FILE = DATA / "hub_message.json"
 MIGRATED_GOLD_PLAYERS = migrate_legacy_wallets(DATA / "legacy.sqlite3")
 if shared_economy_enabled():
-    print(f"[ECONOMIE COMMUNE] PostgreSQL actif • migration initiale: {MIGRATED_GOLD_PLAYERS} joueur(s)")
+    _eco_diag = shared_economy_diagnostics()
+    print(f"[ECONOMIE COMMUNE] PostgreSQL actif • migration initiale: {MIGRATED_GOLD_PLAYERS} joueur(s) • db={_eco_diag['database']} • host={_eco_diag['host']}:{_eco_diag['port']} • wallets={_eco_diag['wallets']} • empreinte={_eco_diag['fingerprint']}")
 else:
     print("[ECONOMIE COMMUNE] désactivée : ECONOMY_DATABASE_URL absente")
 ECONOMY = Economy(DATA / "legacy.sqlite3")
