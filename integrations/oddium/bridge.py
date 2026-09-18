@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import sqlite3
+from shared_economy import connect_shared
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -29,7 +30,7 @@ class AltheryaGoldStore:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=10)
+        conn = connect_shared(self.db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         return conn
 

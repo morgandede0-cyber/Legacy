@@ -1,5 +1,6 @@
 from __future__ import annotations
 import sqlite3
+from shared_economy import connect_shared
 from datetime import datetime
 from pathlib import Path
 from progression import xp_needed_for_level, level_from_xp
@@ -16,7 +17,7 @@ class AdminStore:
         self._init_db()
 
     def _c(self):
-        c = sqlite3.connect(self.db_path, timeout=10)
+        c = connect_shared(self.db_path, timeout=10)
         c.row_factory = sqlite3.Row
         return c
 
@@ -296,7 +297,7 @@ class AdminStore:
 
 def event_multiplier(db_path: str | Path, key: str) -> int:
     try:
-        with sqlite3.connect(Path(db_path), timeout=5) as c:
+        with connect_shared(Path(db_path), timeout=5) as c:
             row = c.execute('SELECT enabled FROM bot_events WHERE event_key=?', (str(key),)).fetchone()
             return 2 if row and int(row[0]) else 1
     except sqlite3.Error:
@@ -306,7 +307,7 @@ def event_multiplier(db_path: str | Path, key: str) -> int:
 def cooldowns_enabled(db_path: str | Path) -> bool:
     """Retourne False uniquement quand un admin a désactivé globalement les cooldowns."""
     try:
-        with sqlite3.connect(Path(db_path), timeout=5) as c:
+        with connect_shared(Path(db_path), timeout=5) as c:
             row = c.execute('SELECT enabled FROM bot_events WHERE event_key=?', ('cooldowns_disabled',)).fetchone()
             return not (row and int(row[0]))
     except sqlite3.Error:

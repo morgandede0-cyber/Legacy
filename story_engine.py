@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from shared_economy import connect_shared
 import time
 from pathlib import Path
 
@@ -28,7 +29,7 @@ class StoryStore:
         self._init_db()
 
     def _connect(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = connect_shared(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
 

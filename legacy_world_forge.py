@@ -6,6 +6,7 @@ import os
 import random
 import re
 import sqlite3
+from shared_economy import connect_shared
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple, List
@@ -156,7 +157,7 @@ class GameDB:
 
     def _connect(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        con = sqlite3.connect(str(self.path), timeout=10)
+        con = connect_shared(str(self.path), timeout=10)
         con.row_factory = sqlite3.Row
         return con
 

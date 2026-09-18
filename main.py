@@ -23,12 +23,12 @@ from tavern_engine import TavernGameStore, MIN_TAVERN_BET, MAX_TAVERN_BET, TAVER
 from tavern_render import render_dice, render_coin, render_rps
 from story_engine import StoryStore, SEASON_1_CHAPTERS, SEASON_1_TITLES, SEASON_1_TEXTS, STORY_REQUIREMENTS, ALL_STORY_ITEMS, STORY_ITEM_PRICES
 from gazette_engine import GazetteStore
-from integrations.oddium.bridge import OddiumBridgeServer
 from expedition_render import render_expedition_live_card
 from job_board_engine import JobBoardStore, RARITIES as JOB_RARITIES
 import legacy_world_forge as WORLD_FORGE
 import tower_engine as TOWER
 from world_engine import current_event, destination_name, destination_description
+from shared_economy import migrate_legacy_wallets, pending_events, mark_event_processed, enabled as shared_economy_enabled
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
@@ -43,6 +43,11 @@ DATA = BASE / "data"
 EXPEDITION_LIVE_ASSETS = DATA / "expedition_live"
 EXPEDITION_LIVE_ASSETS.mkdir(parents=True, exist_ok=True)
 HUB_STATE_FILE = DATA / "hub_message.json"
+MIGRATED_GOLD_PLAYERS = migrate_legacy_wallets(DATA / "legacy.sqlite3")
+if shared_economy_enabled():
+    print(f"[ECONOMIE COMMUNE] PostgreSQL actif • migration initiale: {MIGRATED_GOLD_PLAYERS} joueur(s)")
+else:
+    print("[ECONOMIE COMMUNE] désactivée : ECONOMY_DATABASE_URL absente")
 ECONOMY = Economy(DATA / "legacy.sqlite3")
 ARENA_STORE = ArenaStore(DATA / "legacy.sqlite3")
 EXPEDITION_STORE = ExpeditionStore(DATA / "legacy.sqlite3")
@@ -6128,15 +6133,8 @@ async def _oddium_bridge_event(event: dict):
         pass
 
 
-ODDIUM_BRIDGE = OddiumBridgeServer(
-    db_path=DATA / "legacy.sqlite3",
-    token=ALTHERYA_BRIDGE_TOKEN,
-    host=ALTHERYA_BRIDGE_HOST,
-    port=ALTHERYA_BRIDGE_PORT,
-    event_handler=_oddium_bridge_event,
-)
-ODDIUM_BRIDGE_STARTED = False
 _COMMAND_TREE_SYNCED = False
+
 
 
 async def _altherya_setup_hook():
@@ -6180,12 +6178,23 @@ async def _altherya_setup_hook():
 bot.setup_hook = _altherya_setup_hook
 
 
+@tasks.loop(seconds=3)
+async def shared_economy_event_worker():
+    if not shared_economy_enabled():
+        return
+    for event_id, payload in await asyncio.to_thread(pending_events, 25):
+        try:
+            await _oddium_bridge_event(payload)
+            await asyncio.to_thread(mark_event_processed, event_id)
+        except Exception as exc:
+            print(f"[ECONOMIE COMMUNE] événement {event_id} en attente: {type(exc).__name__}: {exc}")
+            break
+
+
 @bot.event
 async def on_ready():
-    global ODDIUM_BRIDGE_STARTED
-    if not ODDIUM_BRIDGE_STARTED:
-        await ODDIUM_BRIDGE.start()
-        ODDIUM_BRIDGE_STARTED = True
+    if shared_economy_enabled() and not shared_economy_event_worker.is_running():
+        shared_economy_event_worker.start()
     if bot.get_cog("LegacyWorldForge") is None:
         await WORLD_FORGE.setup(bot)
 

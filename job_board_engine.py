@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import random
 import sqlite3
+from shared_economy import connect_shared
 import time
 import uuid
 from dataclasses import dataclass
@@ -161,7 +162,7 @@ class JobBoardStore:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=10)
+        conn = connect_shared(self.db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         return conn
 

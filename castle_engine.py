@@ -1,5 +1,6 @@
 from __future__ import annotations
 import sqlite3
+from shared_economy import connect_shared
 from datetime import datetime
 from pathlib import Path
 from progression import level_from_xp, XP_REWARDS
@@ -39,7 +40,7 @@ class CastleStore:
     def __init__(self, db_path: str|Path):
         self.db_path=Path(db_path); self.db_path.parent.mkdir(parents=True,exist_ok=True); self._init()
     def _c(self):
-        c=sqlite3.connect(self.db_path,timeout=10); c.row_factory=sqlite3.Row; return c
+        c=connect_shared(self.db_path,timeout=10); c.row_factory=sqlite3.Row; return c
     def _today(self): return datetime.now().date().isoformat()
     def _init(self):
         with self._c() as c:
