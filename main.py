@@ -5772,11 +5772,20 @@ def _player_profile_embed(member: discord.Member) -> discord.Embed:
 
 @bot.tree.command(name="profil", description="Affiche ta fiche d’aventurier Altherya")
 async def profil(interaction: discord.Interaction, joueur: discord.Member | None = None):
+    # ACK immédiat : la construction du profil touche plusieurs stores et peut dépasser
+    # la fenêtre Discord de 3 secondes. Si un middleware a déjà acquitté l'interaction,
+    # on réutilise simplement le followup au lieu de répondre une seconde fois (40060).
+    if not interaction.response.is_done():
+        try:
+            await interaction.response.defer(thinking=True)
+        except discord.HTTPException:
+            pass
     member = joueur or interaction.user
     if not isinstance(member, discord.Member):
-        await interaction.response.send_message("❌ Profil indisponible.", ephemeral=True)
+        await interaction.followup.send("❌ Profil indisponible.", ephemeral=True)
         return
-    await interaction.response.send_message(embed=_player_profile_embed(member), ephemeral=False)
+    embed = _player_profile_embed(member)
+    await interaction.followup.send(embed=embed, ephemeral=False)
 
 @bot.tree.command(name="admin", description="Ouvre le panneau d'administration de Altherya")
 async def admin(interaction: discord.Interaction):
