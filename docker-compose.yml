@@ -9,6 +9,7 @@ services:
       - .env
     environment:
       TZ: Europe/Paris
+      ECONOMY_DATABASE_URL: ${ECONOMY_DATABASE_URL}
       ALTHERYA_BRIDGE_TOKEN: ${ALTHERYA_BRIDGE_TOKEN}
       ALTHERYA_BRIDGE_HOST: 0.0.0.0
       ALTHERYA_BRIDGE_PORT: 8787

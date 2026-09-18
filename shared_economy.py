@@ -38,21 +38,32 @@ def init_schema():
         c.commit()
 
 def migrate_legacy_wallets(db_path: str|Path):
+    """Bootstrap PostgreSQL from Altherya SQLite without overwriting live shared balances.
+
+    A local wallet is imported when the shared wallet does not exist, or when it is
+    still zero and has never had an economy transaction. This also repairs the case
+    where Oddium created a zero wallet before Altherya performed its first import.
+    """
     if not enabled(): return 0
     init_schema(); db_path=Path(db_path)
     if not db_path.exists(): return 0
+    imported=0
     with _LOCK, _pg() as pg:
-        marker=pg.execute("SELECT value FROM economy_meta WHERE key='altherya_sqlite_wallet_migrated'").fetchone()
-        if marker: return 0
-        sq=connect_shared(db_path); sq.row_factory=sqlite3.Row
+        sq=sqlite3.connect(db_path); sq.row_factory=sqlite3.Row
         try:
             exists=sq.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='players'").fetchone()
             rows=sq.execute('SELECT user_id,wallet_gold FROM players').fetchall() if exists else []
             for r in rows:
-                pg.execute('''INSERT INTO economy_wallets(user_id,balance) VALUES(%s,%s)
-                    ON CONFLICT(user_id) DO UPDATE SET balance=EXCLUDED.balance,updated_at=NOW()''',(int(r['user_id']),max(0,int(r['wallet_gold']))))
-            pg.execute("INSERT INTO economy_meta(key,value) VALUES('altherya_sqlite_wallet_migrated',%s) ON CONFLICT(key) DO NOTHING",(str(len(rows)),))
-            pg.commit(); return len(rows)
+                uid=int(r['user_id']); local=max(0,int(r['wallet_gold']))
+                if local <= 0: continue
+                shared=pg.execute('SELECT balance FROM economy_wallets WHERE user_id=%s',(uid,)).fetchone()
+                has_tx=pg.execute('SELECT 1 FROM economy_transactions WHERE user_id=%s LIMIT 1',(uid,)).fetchone()
+                if shared is None:
+                    pg.execute('INSERT INTO economy_wallets(user_id,balance) VALUES(%s,%s)',(uid,local)); imported+=1
+                elif int(shared[0]) == 0 and not has_tx:
+                    pg.execute('UPDATE economy_wallets SET balance=%s,updated_at=NOW() WHERE user_id=%s',(local,uid)); imported+=1
+            pg.execute("INSERT INTO economy_meta(key,value) VALUES('altherya_sqlite_wallet_migrated_v2',%s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()",(str(imported),))
+            pg.commit(); return imported
         finally: sq.close()
 
 def get_balance(user_id:int)->int:
@@ -150,7 +161,11 @@ class SharedConnection(sqlite3.Connection):
         self.close(); return False
 
 def connect_shared(database, *args, **kwargs):
-    if not enabled(): return connect_shared(database,*args,**kwargs)
-    kwargs['factory']=SharedConnection
-    c=connect_shared(database,*args,**kwargs)
-    c._sync_in(); return c
+    # Always delegate to sqlite3.connect. Calling connect_shared here recursively
+    # prevents Altherya from opening its local database.
+    if not enabled():
+        return sqlite3.connect(database, *args, **kwargs)
+    kwargs['factory'] = SharedConnection
+    c = sqlite3.connect(database, *args, **kwargs)
+    c._sync_in()
+    return c
