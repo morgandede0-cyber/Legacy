@@ -3,10 +3,23 @@ import asyncio
 import json
 from pathlib import Path
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Environment and shared economy MUST be initialized before importing game modules.
+# Several modules create stores at import time; importing them first could sync a zero
+# PostgreSQL wallet into the legacy SQLite file before its initial migration.
+load_dotenv()
+BASE = Path(__file__).resolve().parent
+DATA = BASE / "data"
+from shared_economy import (
+    migrate_legacy_wallets, pending_events, mark_event_processed,
+    enabled as shared_economy_enabled, diagnostics as shared_economy_diagnostics,
+)
+MIGRATED_GOLD_PLAYERS = migrate_legacy_wallets(DATA / "legacy.sqlite3")
+
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-from dotenv import load_dotenv
 from economy import Economy
 from arena_engine import ArenaStore, BattleState, Fighter, CLASSES, CHAMPION_PROFILES, class_line, choose_first, resolve_action, bot_choose_action
 from expedition_engine import ExpeditionStore, EXPEDITIONS, LOCATION_META, TOOL_META, TOOL_LEVELS, BAG_LEVELS, UPGRADE_RECIPES, BAG_UPGRADE_RECIPES, STARTER_GEAR, RESOURCE_SELL_PRICES, EXPEDITION_OBJECTS, RARITY, RARITY_EMOJI, format_duration, loot_lines
@@ -28,18 +41,13 @@ from job_board_engine import JobBoardStore, RARITIES as JOB_RARITIES
 import legacy_world_forge as WORLD_FORGE
 import tower_engine as TOWER
 from world_engine import current_event, destination_name, destination_description
-load_dotenv()
-from shared_economy import migrate_legacy_wallets, pending_events, mark_event_processed, enabled as shared_economy_enabled, diagnostics as shared_economy_diagnostics
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 GUILD_ID = os.getenv("GUILD_ID", "").strip()
-BASE = Path(__file__).resolve().parent
 PLACES = BASE / "assets" / "places"
 TRANSITIONS = BASE / "assets" / "transitions"
-DATA = BASE / "data"
 EXPEDITION_LIVE_ASSETS = DATA / "expedition_live"
 EXPEDITION_LIVE_ASSETS.mkdir(parents=True, exist_ok=True)
 HUB_STATE_FILE = DATA / "hub_message.json"
-MIGRATED_GOLD_PLAYERS = migrate_legacy_wallets(DATA / "legacy.sqlite3")
 if shared_economy_enabled():
     _eco_diag = shared_economy_diagnostics()
     print(f"[ECONOMIE COMMUNE] PostgreSQL actif • migration initiale: {MIGRATED_GOLD_PLAYERS} joueur(s) • db={_eco_diag['database']} • host={_eco_diag['host']}:{_eco_diag['port']} • wallets={_eco_diag['wallets']} • empreinte={_eco_diag['fingerprint']}")

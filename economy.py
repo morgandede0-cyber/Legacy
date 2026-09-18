@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+import logging
 from shared_economy import connect_shared
 from dataclasses import dataclass
+
+log = logging.getLogger("altherya.economy")
 from datetime import datetime
 from pathlib import Path
 
@@ -69,11 +72,13 @@ class Economy:
             ).fetchone()
             conn.commit()
 
-        return Balance(
+        result = Balance(
             wallet=int(row["wallet_gold"]),
             bank=int(row["bank_gold"]),
             free_withdrawal_available=row["last_withdrawal_date"] != self._today(),
         )
+        log.info("[WALLET] lecture économie commune • user_id=%s • wallet=%s • bank=%s", int(user_id), result.wallet, result.bank)
+        return result
 
     def deposit(self, user_id: int, amount: int) -> TransactionResult:
         amount = int(amount)
