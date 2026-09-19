@@ -80,6 +80,7 @@ DESTINATIONS = {
     "market":      {"label":"Marché",          "emoji":"🛒", "image":"market.png",      "transition":"to_market.gif"},
     "tavern":      {"label":"Taverne",         "emoji":"🍺", "image":"tavern.png",      "transition":"to_tavern.gif"},
     "bank":        {"label":"Banque",          "emoji":"🏦", "image":"bank.png",        "transition":"to_bank.gif"},
+    "forge":       {"label":"Forge",           "emoji":"⚒️", "image":"forge.png",       "transition":"to_forge.gif"},
     "arena":       {"label":"Arène",           "emoji":"⚔️", "image":"arena.png",       "transition":"to_arena.gif"},
     "expeditions": {"label":"Petites annonces", "emoji":"📌", "image":"expeditions.png", "transition":"to_expeditions.gif"},
     "alley":       {"label":"Ruelle sombre",   "emoji":"🌑", "image":"alley.png",       "transition":"to_alley.gif"},
@@ -490,6 +491,7 @@ class CityHubV2(discord.ui.LayoutView):
             "market": "Achète, vends et équipe ton aventurier.",
             "tavern": "Bois, joue, défie tes amis et écoute le Troubadour.",
             "bank": "Protège tes Gold et consulte ton coffre.",
+            "forge": "Améliore ton équipement et renforce tes outils.",
             "arena": "Affronte le Champion ou un autre joueur.",
             "expeditions": "Contrats, ressources et départs vers les terres sauvages.",
             "alley": "Marché clandestin, risques et affaires douteuses.",
@@ -498,7 +500,10 @@ class CityHubV2(discord.ui.LayoutView):
         for key, data in DESTINATIONS.items():
             b = discord.ui.Button(label="Entrer", emoji=data["emoji"], style=discord.ButtonStyle.primary if key in {"tavern","arena","castle"} else discord.ButtonStyle.secondary, custom_id=f"altherya:v210:city:{key}")
             async def cb(interaction: discord.Interaction, destination=key):
-                await travel(interaction, destination, edit=True)
+                # IMPORTANT : un message passé en Components V2 conserve le flag V2.
+                # Discord interdit ensuite d'y remettre content/embed + discord.ui.View classique.
+                # Les lieux historiques s'ouvrent donc dans leur propre fenêtre privée.
+                await travel(interaction, destination, edit=False)
             b.callback = cb
             panel.add_item(discord.ui.Section(f"### {data['emoji']} {data['label'].upper()}\n{descriptions.get(key, 'Explorer ce lieu.')}", accessory=b))
             panel.add_item(v2_separator())
@@ -509,8 +514,16 @@ class CityHubV2(discord.ui.LayoutView):
             file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
             await interaction.response.edit_message(content=None, embeds=[], attachments=[file], view=WorldHubV2(private_session=True))
         async def board_cb(interaction: discord.Interaction):
-            await safe_defer(interaction)
-            await show_central_board(interaction)
+            p = CASTLE_STORE.profile(interaction.user.id)
+            lvl, cur, need = level_from_xp(p['xp'])
+            txt = (
+                '📋 **PANNEAU CENTRAL DE LEGACY**\n\n'
+                'Toutes tes informations personnelles sont regroupées ici.\n'
+                f'⭐ Niveau actuel : **{lvl}** • XP **{cur}/{need}**\n\n'
+                '📋 **Quêtes quotidiennes** — Consulte tes 6 objectifs.\n'
+                '📜 **Fiche joueur** — Consulte ta progression, tes réputations, ta fortune et tes statistiques.'
+            )
+            await interaction.response.send_message(content=txt, view=CentralBoardView(), ephemeral=True)
         world.callback = world_cb; board.callback = board_cb
         panel.add_item(v2_action_row(board, world))
         self.add_item(panel)
