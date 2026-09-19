@@ -25,6 +25,33 @@ RENDER_DIR.mkdir(parents=True, exist_ok=True)
 CASTLE = CastleStore(DB_PATH)
 GAZETTE = GazetteStore(DB_PATH)
 
+
+def _v2_view(title: str, description: str, legacy_view: discord.ui.View | None = None, *, image: str | None = None, accent: int = 0x6D4B37):
+    """Construit une surface Components V2 sans Embed ni Select visible."""
+    out = discord.ui.LayoutView(timeout=getattr(legacy_view, "timeout", 900) if legacy_view else 900)
+    children = [discord.ui.TextDisplay(f"# {title}\n{description}" if description else f"# {title}")]
+    if image:
+        gallery = discord.ui.MediaGallery()
+        gallery.add_item(media=f"attachment://{image}", description=title)
+        children += [discord.ui.Separator(spacing=discord.SeparatorSpacing.small), gallery]
+    buttons=[]
+    if legacy_view is not None:
+        for item in list(getattr(legacy_view, "children", [])):
+            if isinstance(item, discord.ui.Button):
+                buttons.append(item)
+    for i in range(0, len(buttons), 5):
+        children.append(discord.ui.ActionRow(*buttons[i:i+5]))
+    out.add_item(discord.ui.Container(*children, accent_colour=accent))
+    return out
+
+async def _edit_v2(interaction, *, title, description, legacy_view=None, file=None, filename=None, accent=0x6D4B37):
+    view=_v2_view(title, description, legacy_view, image=filename if file else None, accent=accent)
+    await interaction.response.edit_message(content=None, embeds=[], attachments=[file] if file else [], view=view)
+
+async def _send_v2(interaction, *, title, description, legacy_view=None, file=None, filename=None, ephemeral=True, accent=0x6D4B37):
+    view=_v2_view(title, description, legacy_view, image=filename if file else None, accent=accent)
+    await interaction.response.send_message(view=view, file=file, ephemeral=ephemeral)
+
 # Récompenses modestes : une seule fois par étage.
 FLOORS = {
     1:  dict(name="Rat des Profondeurs", hp=650,  atk=70,  defense=35, speed=94,  gold=10,  pouciel=0),
@@ -421,13 +448,7 @@ class TowerClassView(discord.ui.View):
         path = await render_battle(state, avatar)
         view = TowerBattleView(state, avatar)
         file = discord.File(path, filename="ashkar_battle.png")
-        embed = discord.Embed(
-            title=f"🗼 Tour d'Ashkar — Étage {floor}",
-            description=f"{class_line(self.class_key)}\n\n**{FLOORS[floor]['name']}** se dresse devant toi.\nChoisis ton attaque.",
-            color=0x6D4B37 if floor < 10 else 0x8B1E1E,
-        )
-        embed.set_image(url="attachment://ashkar_battle.png")
-        await interaction.response.edit_message(content=None, embed=embed, attachments=[file], view=view)
+        await _edit_v2(interaction, title=f"🗼 Tour d'Ashkar — Étage {floor}", description=f"{class_line(self.class_key)}\n\n**{FLOORS[floor]['name']}** se dresse devant toi.\nChoisis ton attaque.", legacy_view=view, file=file, filename="ashkar_battle.png", accent=0x6D4B37 if floor < 10 else 0x8B1E1E)
 
     async def back_cb(self, interaction: discord.Interaction):
         try:
@@ -506,9 +527,7 @@ class TowerBattleView(discord.ui.View):
         desc = f"{class_line(self.state.class_key)}\n**{e['name']}** • Étage **{self.state.floor}/10**"
         if extra:
             desc += "\n" + extra
-        embed = discord.Embed(title="⚔️ Combat — Tour d'Ashkar", description=desc, color=0x8B1E1E if self.state.floor == 10 else 0x6D4B37)
-        embed.set_image(url="attachment://ashkar_battle.png")
-        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+        await _edit_v2(interaction, title="⚔️ Combat — Tour d'Ashkar", description=desc, legacy_view=self, file=file, filename="ashkar_battle.png", accent=0x8B1E1E if self.state.floor == 10 else 0x6D4B37)
 
     async def enemy_turn(self):
         s = self.state
@@ -644,38 +663,18 @@ class TowerBattleView(discord.ui.View):
         self.state.log = f"🏆 VICTOIRE ! Étage {self.state.floor} validé. {reward}"
         path = await render_battle(self.state, self.avatar_bytes)
         file = discord.File(path, filename="ashkar_battle.png")
-        embed = discord.Embed(
-            title=f"🏆 Étage {self.state.floor} terminé !",
-            description=f"**{e['name']}** est vaincu.\n\n{reward}\n\nL'étage reste **définitivement validé**.\nTu pourras choisir à nouveau ta classe avant le prochain étage.",
-            color=discord.Color.gold(),
-        )
-        embed.set_image(url="attachment://ashkar_battle.png")
-        await interaction.response.edit_message(embed=embed, attachments=[file], view=PostBattleView(self.state.owner_id, self.state.class_key, self.state.floor, won=True))
+        await _edit_v2(interaction, title=f"🏆 Étage {self.state.floor} terminé !", description=f"**{e['name']}** est vaincu.\n\n{reward}\n\nL'étage reste **définitivement validé**.\nTu pourras choisir à nouveau ta classe avant le prochain étage.", legacy_view=PostBattleView(self.state.owner_id, self.state.class_key, self.state.floor, won=True), file=file, filename="ashkar_battle.png", accent=0xD6A84B)
 
     async def finish_loss(self, interaction):
         self.finished = True
         self.state.log = "💀 Défaite. Aucun étage perdu : tu pourras retenter ce combat."
         path = await render_battle(self.state, self.avatar_bytes)
         file = discord.File(path, filename="ashkar_battle.png")
-        embed = discord.Embed(
-            title="💀 Défaite",
-            description=f"Tu n'as pas vaincu **{FLOORS[self.state.floor]['name']}**.\n\n✅ Tes étages déjà validés restent acquis.\n🔁 Tu peux retenter cet étage et même changer de classe avant le prochain essai.",
-            color=discord.Color.dark_red(),
-        )
-        embed.set_image(url="attachment://ashkar_battle.png")
-        await interaction.response.edit_message(embed=embed, attachments=[file], view=PostBattleView(self.state.owner_id, self.state.class_key, self.state.floor, won=False))
+        await _edit_v2(interaction, title="💀 Défaite", description=f"Tu n'as pas vaincu **{FLOORS[self.state.floor]['name']}**.\n\n✅ Tes étages déjà validés restent acquis.\n🔁 Tu peux retenter cet étage et même changer de classe avant le prochain essai.", legacy_view=PostBattleView(self.state.owner_id, self.state.class_key, self.state.floor, won=False), file=file, filename="ashkar_battle.png", accent=0x8B1E1E)
 
     async def flee(self, interaction: discord.Interaction):
         self.finished = True
-        await interaction.response.edit_message(
-            embed=discord.Embed(
-                title="🏳️ Combat abandonné",
-                description="Aucune progression n'est perdue et cet abandon ne valide pas l'étage. Tu peux changer de classe avant de retenter.",
-                color=discord.Color.greyple(),
-            ),
-            attachments=[],
-            view=PostBattleView(self.state.owner_id, self.state.class_key, self.state.floor, won=False),
-        )
+        await _edit_v2(interaction, title="🏳️ Combat abandonné", description="Aucune progression n'est perdue et cet abandon ne valide pas l'étage. Tu peux changer de classe avant de retenter.", legacy_view=PostBattleView(self.state.owner_id, self.state.class_key, self.state.floor, won=False), accent=0x666666)
 
 
 class PostBattleView(discord.ui.View):
@@ -727,13 +726,7 @@ class PostBattleView(discord.ui.View):
         path = await render_battle(state, avatar)
         file = discord.File(path, filename="ashkar_battle.png")
         view = TowerBattleView(state, avatar)
-        embed = discord.Embed(
-            title=f"🗼 Tour d'Ashkar — Étage {floor}",
-            description=f"{class_line(self.class_key)}\n\n**{FLOORS[floor]['name']}** se dresse devant toi.\nChoisis ton attaque.",
-            color=0x6D4B37 if floor < 10 else 0x8B1E1E,
-        )
-        embed.set_image(url="attachment://ashkar_battle.png")
-        await interaction.response.edit_message(content=None, embed=embed, attachments=[file], view=view)
+        await _edit_v2(interaction, title=f"🗼 Tour d'Ashkar — Étage {floor}", description=f"{class_line(self.class_key)}\n\n**{FLOORS[floor]['name']}** se dresse devant toi.\nChoisis ton attaque.", legacy_view=view, file=file, filename="ashkar_battle.png", accent=0x6D4B37 if floor < 10 else 0x8B1E1E)
 
     async def continue_next(self, interaction: discord.Interaction):
         next_floor = self.floor + 1
