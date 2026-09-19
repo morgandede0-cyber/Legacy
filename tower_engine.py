@@ -367,36 +367,20 @@ async def _avatar_bytes(user: discord.abc.User) -> Optional[bytes]:
         return None
 
 
-class TowerClassSelect(discord.ui.Select):
-    def __init__(self, parent_view):
-        self.parent_ref = parent_view
-        options = [
-            discord.SelectOption(
-                label=c["name"], value=k, emoji=c["emoji"],
-                description=f"{c['animal']} — {'Attaque' if k == 'ravageur' else 'Défense' if k == 'gardien' else 'Vitesse'}"
-            ) for k, c in CLASSES.items()
-        ]
-        super().__init__(placeholder="Choisir ta classe pour cet étage...", min_values=1, max_values=1, options=options, row=0)
-
-    async def callback(self, interaction: discord.Interaction):
-        v = self.parent_ref
-        if interaction.user.id != v.owner_id:
-            await interaction.response.send_message("❌ Cette ascension appartient à un autre joueur.", ephemeral=True)
-            return
-        v.class_key = self.values[0]
-        v.sync_buttons()
-        floor = STORE.progress(interaction.user.id) + 1
-        content = _tower_class_content(interaction.user.id, floor, v.class_key)
-        await interaction.response.edit_message(content=content, view=v)
-
-
 class TowerClassView(discord.ui.View):
     def __init__(self, owner_id: int):
         super().__init__(timeout=900)
         self.owner_id = int(owner_id)
         self.class_key: str | None = None
-        self.selector = TowerClassSelect(self)
-        self.add_item(self.selector)
+        for key, c in CLASSES.items():
+            btn = discord.ui.Button(label=c["name"], emoji=c["emoji"], style=discord.ButtonStyle.primary, row=0)
+            async def choose(interaction: discord.Interaction, class_key=key):
+                self.class_key = class_key
+                self.sync_buttons()
+                floor = STORE.progress(interaction.user.id) + 1
+                await interaction.response.edit_message(content=_tower_class_content(interaction.user.id, floor, self.class_key), view=self)
+            btn.callback = choose
+            self.add_item(btn)
 
         self.ready = discord.ui.Button(label="Entrer dans l'étage", emoji="⚔️", style=discord.ButtonStyle.danger, disabled=True, row=1)
         self.back = discord.ui.Button(label="Retour au monde", emoji="🌍", style=discord.ButtonStyle.secondary, row=1)

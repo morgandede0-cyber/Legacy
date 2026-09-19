@@ -6308,6 +6308,192 @@ async def shared_economy_event_worker():
             break
 
 
+
+# ============================================================
+# V2.11 — NO-SELECT UI OVERRIDES
+# Toute sélection visible passe par boutons/pagination ou modal ID.
+# Les anciennes classes Select restent uniquement comme adaptateurs de logique
+# et ne sont jamais ajoutées à une View utilisateur.
+# ============================================================
+_LegacyTavernDrinkSelect = TavernDrinkSelect
+_LegacyMarketSellSelect = MarketSellSelect
+_LegacyArenaFriendUserSelect = ArenaFriendUserSelect
+_LegacyChampionClassSelect = ChampionClassSelect
+_LegacyFriendClassSelect = FriendClassSelect
+_LegacyThiefTargetSelect = ThiefTargetSelect
+_LegacyNPCTargetSelect = NPCTargetSelect
+_LegacyAdminAchievementSelect = AdminAchievementSelect
+_LegacyAdminTargetSelect = AdminTargetSelect
+_LegacyAdminAccessSelect = AdminAccessSelect
+_LegacyAdminPlayerProfileSelect = AdminPlayerProfileSelect
+
+async def _v211_member(guild, raw: str):
+    if not guild: return None
+    raw=''.join(ch for ch in str(raw) if ch.isdigit())
+    if not raw: return None
+    uid=int(raw); m=guild.get_member(uid)
+    if m: return m
+    try: return await guild.fetch_member(uid)
+    except Exception: return None
+
+class _V211MemberModal(discord.ui.Modal):
+    def __init__(self, title: str, handler):
+        super().__init__(title=title); self.handler=handler
+        self.member=discord.ui.TextInput(label="ID Discord du joueur",placeholder="Ex : 666805849011912705",min_length=5,max_length=24)
+        self.add_item(self.member)
+    async def on_submit(self, i):
+        m=await _v211_member(i.guild,self.member.value)
+        if not m: return await i.response.send_message("❌ Joueur introuvable. Active le mode développeur Discord puis copie son ID.",ephemeral=True)
+        await self.handler(i,m)
+
+class TavernDrinksView(discord.ui.View):
+    def __init__(self, user_id: int | None = None):
+        super().__init__(timeout=300); tier=TAVERN_STORE.tavern_reputation(user_id)["tier"] if user_id else 5
+        for key,label,emoji,required in TAVERN_DRINKS:
+            if tier < required: continue
+            b=discord.ui.Button(label=label,emoji=emoji,style=discord.ButtonStyle.primary)
+            async def cb(i,k=key):
+                sel=_LegacyTavernDrinkSelect(i.user.id); sel._values=[k]; await sel.callback(i)
+            b.callback=cb; self.add_item(b)
+        back=discord.ui.Button(label="Retour au comptoir",emoji="↩️",style=discord.ButtonStyle.secondary)
+        async def back_cb(i):
+            await safe_defer(i); await edit_with_asset(i,PLACES/"tavern_barman.png","barman.png",TavernBarView(),"🍺 **Le comptoir de Altherya**\n"+tavern_reputation_content(i.user.id))
+        back.callback=back_cb; self.add_item(back)
+
+class TavernFriendSelectView(discord.ui.View):
+    def __init__(self, owner_id:int, game_type:str):
+        super().__init__(timeout=90); self.owner_id=int(owner_id); self.game_type=game_type
+        b=discord.ui.Button(label="Choisir l’ami par ID",emoji="🤝",style=discord.ButtonStyle.primary)
+        async def cb(i):
+            if i.user.id!=self.owner_id: return await i.response.send_message("Cette préparation appartient à un autre joueur.",ephemeral=True)
+            async def picked(ii,m):
+                if m.id==ii.user.id or m.bot: return await ii.response.send_message("❌ Choisis un autre joueur humain.",ephemeral=True)
+                await ii.response.send_modal(TavernFriendBetModal(self.game_type,m.id))
+            await i.response.send_modal(_V211MemberModal("Choisir l’ami",picked))
+        b.callback=cb; self.add_item(b)
+
+class MarketSellView(discord.ui.View):
+    def __init__(self, owner_id:int, page:int=0):
+        super().__init__(timeout=300); self.owner_id=int(owner_id); self.page=max(0,int(page))
+        inv=EXPEDITION_STORE.get_resources(owner_id); items=[n for n,q in sorted(inv.items()) if RESOURCE_SELL_PRICES.get(n,0)>0]
+        pages=max(1,(len(items)+4)//5); self.page=min(self.page,pages-1)
+        for name in items[self.page*5:self.page*5+5]:
+            qty=inv[name]; price=RESOURCE_SELL_PRICES[name]
+            b=discord.ui.Button(label=f"{name} ×{qty} • {price}G/u",emoji="💰",style=discord.ButtonStyle.success)
+            async def cb(i,n=name): await i.response.send_modal(ResourceSellModal(self.owner_id,n))
+            b.callback=cb; self.add_item(b)
+        if not items:
+            self.add_item(discord.ui.Button(label="Aucune ressource vendable",disabled=True,style=discord.ButtonStyle.secondary))
+        prev=discord.ui.Button(label="Précédent",emoji="◀️",style=discord.ButtonStyle.secondary,disabled=self.page<=0)
+        nxt=discord.ui.Button(label="Suivant",emoji="▶️",style=discord.ButtonStyle.secondary,disabled=self.page>=pages-1)
+        async def nav(i,d): await i.response.edit_message(view=MarketSellView(self.owner_id,self.page+d))
+        prev.callback=lambda i: nav(i,-1); nxt.callback=lambda i: nav(i,1); self.add_item(prev); self.add_item(nxt)
+        back=discord.ui.Button(label="Retour au marché",emoji="↩️",style=discord.ButtonStyle.secondary)
+        async def bk(i): await safe_defer(i); await edit_with_asset(i,PLACES/"market.png","marche.png",MarketView(),"🛒 **Marché de Altherya**\nQue veux-tu faire ?"+npc_alcohol_reaction(i.user.id,"marchand"))
+        back.callback=bk; self.add_item(back)
+
+class ArenaFriendSelectView(discord.ui.View):
+    def __init__(self, owner_id:int):
+        super().__init__(timeout=300); self.owner_id=int(owner_id)
+        b=discord.ui.Button(label="Choisir l’adversaire par ID",emoji="⚔️",style=discord.ButtonStyle.danger)
+        async def cb(i):
+            async def picked(ii,m):
+                if m.id==self.owner_id or m.bot: return await ii.response.send_message("❌ Choisis un autre joueur humain.",ephemeral=True)
+                if ARENA_STORE.friend_remaining(m.id)<=0: return await ii.response.send_message(f"❌ {m.mention} a déjà utilisé ses combats amicaux du jour.",ephemeral=True)
+                await ii.response.send_modal(ArenaWagerModal("friend",self.owner_id,m.id))
+            await i.response.send_modal(_V211MemberModal("Choisir l’adversaire",picked))
+        b.callback=cb; self.add_item(b)
+
+_ChampionClassViewBase=ChampionClassView
+class ChampionClassView(_ChampionClassViewBase):
+    def __init__(self, owner_id:int, wager:int):
+        super().__init__(owner_id,wager)
+        for item in list(self.children):
+            if isinstance(item,discord.ui.Select): self.remove_item(item)
+        for key,c in CLASSES.items():
+            b=discord.ui.Button(label=c['name'],emoji=c['emoji'],style=discord.ButtonStyle.primary)
+            async def cb(i,k=key):
+                self.class_key=k; await i.response.edit_message(content=f"👑 **Défi du Champion**\nMise : **{_gold(self.wager)} Gold**\nClasse : {class_line(k)}\n\nQuand tu es prêt, valide le combat.",view=self)
+            b.callback=cb; self.add_item(b)
+
+_FriendLobbyViewBase=FriendLobbyView
+class FriendLobbyView(_FriendLobbyViewBase):
+    def __init__(self,p1:int,p2:int,wager:int):
+        super().__init__(p1,p2,wager)
+        for item in list(self.children):
+            if isinstance(item,discord.ui.Select): self.remove_item(item)
+        for key,c in CLASSES.items():
+            b=discord.ui.Button(label=c['name'],emoji=c['emoji'],style=discord.ButtonStyle.primary)
+            async def cb(i,k=key):
+                if i.user.id not in (self.p1,self.p2): return await i.response.send_message("Tu ne participes pas à ce défi.",ephemeral=True)
+                self.classes[i.user.id]=k; self.ready.discard(i.user.id); await i.response.edit_message(content=friend_lobby_content(self),view=self)
+            b.callback=cb; self.add_item(b)
+
+class ThiefTargetView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+        b=discord.ui.Button(label="Choisir la cible par ID",emoji="🐺",style=discord.ButtonStyle.danger)
+        async def cb(i):
+            async def picked(ii,m):
+                sel=_LegacyThiefTargetSelect(); sel._values=[m]; await sel.callback(ii)
+            await i.response.send_modal(_V211MemberModal("Cible du vol",picked))
+        b.callback=cb; self.add_item(b)
+
+class NPCTargetView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180); sel=_LegacyNPCTargetSelect()
+        for opt in sel.options:
+            b=discord.ui.Button(label=opt.label,emoji="🪙",style=discord.ButtonStyle.danger)
+            async def cb(i,v=opt.value):
+                x=_LegacyNPCTargetSelect(); x._values=[v]; await x.callback(i)
+            b.callback=cb; self.add_item(b)
+
+class AdminAchievementView(discord.ui.View):
+    def __init__(self,target_id:int,mode:str,page:int=0):
+        super().__init__(timeout=180); self.target_id=int(target_id); self.mode=mode
+        sel=_LegacyAdminAchievementSelect(target_id,mode); opts=list(sel.options); pages=max(1,(len(opts)+4)//5); self.page=max(0,min(page,pages-1))
+        for opt in opts[self.page*5:self.page*5+5]:
+            b=discord.ui.Button(label=opt.label[:75],emoji=opt.emoji,style=discord.ButtonStyle.success if mode=='unlock' else discord.ButtonStyle.danger)
+            async def cb(i,v=opt.value): x=_LegacyAdminAchievementSelect(self.target_id,self.mode); x._values=[v]; await x.callback(i)
+            b.callback=cb; self.add_item(b)
+        prev=discord.ui.Button(label="Précédent",emoji="◀️",style=discord.ButtonStyle.secondary,disabled=self.page==0)
+        nxt=discord.ui.Button(label="Suivant",emoji="▶️",style=discord.ButtonStyle.secondary,disabled=self.page>=pages-1)
+        prev.callback=lambda i: i.response.edit_message(view=AdminAchievementView(self.target_id,self.mode,self.page-1))
+        nxt.callback=lambda i: i.response.edit_message(view=AdminAchievementView(self.target_id,self.mode,self.page+1))
+        self.add_item(prev); self.add_item(nxt)
+
+class AdminTargetView(discord.ui.View):
+    def __init__(self,action:str):
+        super().__init__(timeout=180); self.action=action
+        b=discord.ui.Button(label="Choisir le joueur par ID",emoji="👤",style=discord.ButtonStyle.primary)
+        async def cb(i):
+            async def picked(ii,m):
+                x=_LegacyAdminTargetSelect(self.action); x._values=[m]; await x.callback(ii)
+            await i.response.send_modal(_V211MemberModal("Joueur à administrer",picked))
+        b.callback=cb; self.add_item(b)
+
+class AdminAccessPickView(discord.ui.View):
+    def __init__(self,mode:str):
+        super().__init__(timeout=180); self.mode=mode
+        b=discord.ui.Button(label="Choisir le joueur par ID",emoji="👥",style=discord.ButtonStyle.primary)
+        async def cb(i):
+            async def picked(ii,m): x=_LegacyAdminAccessSelect(self.mode); x._values=[m]; await x.callback(ii)
+            await i.response.send_modal(_V211MemberModal("Accès /admin",picked))
+        b.callback=cb; self.add_item(b)
+
+class AdminPlayersView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        b=discord.ui.Button(label="Ouvrir un profil par ID",emoji="👤",style=discord.ButtonStyle.primary)
+        async def cb(i):
+            async def picked(ii,m): await show_admin_player_profile(ii,int(m.id))
+            await i.response.send_modal(_V211MemberModal("Profil joueur",picked))
+        b.callback=cb; self.add_item(b)
+        back=discord.ui.Button(label="Retour catégories",emoji="↩️",style=discord.ButtonStyle.secondary)
+        async def bk(i):
+            if await _admin_guard(i): await i.response.edit_message(content=None,embed=admin_home_embed(),view=AdminPanelView())
+        back.callback=bk; self.add_item(back)
+
 @bot.event
 async def on_ready():
     if shared_economy_enabled() and not shared_economy_event_worker.is_running():

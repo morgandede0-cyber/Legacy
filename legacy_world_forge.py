@@ -1238,35 +1238,34 @@ class FightView(discord.ui.View):
         await interaction.response.edit_message(embed=self._embed(f"🏳️ **{attacker.name} abandonne. {defender.name} remporte le combat.**"), view=self)
 
 
-class ChampionSelect(discord.ui.Select):
-    def __init__(self, owner_id: int):
-        self.owner_id = owner_id
-        options = []
-        for i,c in CHAMPIONS.items():
-            reco = ["Débutant","Commun","Commun","Commun complet","Rare","Rare/Épique","Épique","Mythique","Mythique/Légendaire","Légendaire"][i-1]
-            options.append(discord.SelectOption(label=c["name"], value=str(i), description=f"Stuff conseillé : {reco}"))
-        super().__init__(placeholder="Choisir Champion I → X", options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.owner_id:
-            return await interaction.response.send_message("Ce menu n'est pas le tien.", ephemeral=True)
-        level = int(self.values[0]); c = CHAMPIONS[level]
-        eq = await DB.get_equipment(self.owner_id); ps = stats_from_equipment(eq)
-        cs = FighterStats(c["hp"],c["atk"],c["def"],c["speed"])
-        p = Combatant(self.owner_id, interaction.user.display_name, ps, ps.hp)
-        npc = Combatant(-level, c["name"], cs, cs.hp, is_npc=True)
-        view = FightView(p,npc,champion_level=level)
-        await interaction.response.send_message(embed=view._embed(f"🏟️ **{c['name']}** entre dans l'arène."), view=view)
-        if view.turn_user_id == npc.user_id:
-            await asyncio.sleep(1.0)
-            msg = await interaction.original_response()
-            await view.npc_turn(msg)
-
-
 class ArenaView(discord.ui.View):
-    def __init__(self, owner_id: int):
+    def __init__(self, owner_id: int, page: int = 0):
         super().__init__(timeout=180)
-        self.add_item(ChampionSelect(owner_id))
+        self.owner_id = int(owner_id)
+        self.page = max(0, min(1, int(page)))
+        levels = list(CHAMPIONS.keys())[self.page*5:self.page*5+5]
+        for level in levels:
+            c = CHAMPIONS[level]
+            btn = discord.ui.Button(label=f"{level}. {c['name']}", emoji="⚔️", style=discord.ButtonStyle.danger)
+            async def fight(interaction: discord.Interaction, lvl=level):
+                if interaction.user.id != self.owner_id:
+                    return await interaction.response.send_message("Cette arène appartient à un autre joueur.", ephemeral=True)
+                c2=CHAMPIONS[lvl]; eq=await DB.get_equipment(self.owner_id); ps=stats_from_equipment(eq)
+                cs=FighterStats(c2["hp"],c2["atk"],c2["def"],c2["speed"])
+                p=Combatant(self.owner_id,interaction.user.display_name,ps,ps.hp)
+                npc=Combatant(-lvl,c2["name"],cs,cs.hp,is_npc=True)
+                view=FightView(p,npc,champion_level=lvl)
+                await interaction.response.send_message(embed=view._embed(f"🏟️ **{c2['name']}** entre dans l’arène."),view=view)
+                if view.turn_user_id == npc.user_id:
+                    await asyncio.sleep(1.0); msg=await interaction.original_response(); await view.npc_turn(msg)
+            btn.callback=fight; self.add_item(btn)
+        prev=discord.ui.Button(label="Précédents",emoji="◀️",style=discord.ButtonStyle.secondary,disabled=self.page==0)
+        nxt=discord.ui.Button(label="Suivants",emoji="▶️",style=discord.ButtonStyle.secondary,disabled=self.page==1)
+        async def nav(i, delta):
+            if i.user.id != self.owner_id: return await i.response.send_message("Cette arène appartient à un autre joueur.",ephemeral=True)
+            await i.response.edit_message(view=ArenaView(self.owner_id,self.page+delta))
+        prev.callback=lambda i: nav(i,-1); nxt.callback=lambda i: nav(i,1)
+        self.add_item(prev); self.add_item(nxt)
 
 
 class DuelInviteView(discord.ui.View):
