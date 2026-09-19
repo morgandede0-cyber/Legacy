@@ -6641,18 +6641,9 @@ class AdminAccessPickView(discord.ui.View):
             await i.response.send_modal(_V211MemberModal("Accès /admin",picked))
         b.callback=cb; self.add_item(b)
 
-class AdminPlayersView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-        b=discord.ui.Button(label="Rechercher un joueur",emoji="👤",style=discord.ButtonStyle.primary)
-        async def cb(i):
-            async def picked(ii,m): await show_admin_player_profile(ii,int(m.id))
-            await i.response.send_modal(_V211MemberModal("Profil joueur",picked))
-        b.callback=cb; self.add_item(b)
-        back=discord.ui.Button(label="Retour catégories",emoji="↩️",style=discord.ButtonStyle.secondary)
-        async def bk(i):
-            if await _admin_guard(i): await i.response.edit_message(content=None,embed=admin_home_embed(),view=AdminPanelView())
-        back.callback=bk; self.add_item(back)
+# V2.25: l'écran Administration des joueurs utilise la définition native
+# AdminPlayerProfileSelect/AdminPlayersView déclarée plus haut.
+# Suppression de la seconde définition afin d'éviter toute route divergente.
 
 @bot.event
 async def on_ready():
