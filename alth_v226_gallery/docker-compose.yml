@@ -1,0 +1,20 @@
+services:
+  legacy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: legacy-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: Europe/Paris
+      ECONOMY_DATABASE_URL: ${ECONOMY_DATABASE_URL}
+      ALTHERYA_BRIDGE_TOKEN: ${ALTHERYA_BRIDGE_TOKEN}
+      ALTHERYA_BRIDGE_HOST: 0.0.0.0
+      ALTHERYA_BRIDGE_PORT: 8787
+    volumes:
+      - legacy_data:/app/data
+
+volumes:
+  legacy_data:
