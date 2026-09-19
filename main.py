@@ -5177,7 +5177,13 @@ async def _send_personal_place(interaction: discord.Interaction, destination: st
     )
     file = discord.File(image, filename="lieu.png")
     if edit:
-        await interaction.response.edit_message(content=content, attachments=[file], embeds=[], view=view)
+        # Components V2: acquitter immédiatement l'interaction avant de construire/éditer
+        # un ancien sous-écran discord.ui.View. Cela évite le timeout « n'a pas répondu »
+        # lors du passage Hub V2 -> Arène/Banque/Taverne/etc.
+        await safe_defer(interaction)
+        await interaction.edit_original_response(
+            content=content, attachments=[file], embeds=[], view=view
+        )
     else:
         await interaction.response.send_message(content=content, file=file, view=view, ephemeral=True)
 
