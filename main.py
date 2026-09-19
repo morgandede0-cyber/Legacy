@@ -4732,29 +4732,55 @@ class PodiumView(CastleBackView):
         refresh.callback=r; super().__init__(refresh)
 
 def _podium_cell(text: str, width: int) -> str:
-    text = str(text)
+    # Le podium doit rester compact : Discord casse rapidement les grands blocs monospace.
+    text = str(text).replace("`", "'").replace("\n", " ").strip()
     if len(text) > width:
         text = text[:max(1, width - 1)] + "…"
     return text.center(width)
 
+
 def _podium_text(top3):
-    # Ordre visuel d'un vrai podium : 2e à gauche, 1er au centre, 3e à droite.
+    """Podium texte compact et stable : 2e à gauche, 1er au centre, 3e à droite.
+
+    Les noms/fortunes sont volontairement limités à 11 caractères par colonne afin
+    que Discord ne replie jamais le dessin et ne décale plus les marches.
+    """
     slots = {1: ("—", 0), 2: ("—", 0), 3: ("—", 0)}
     for pos, name, total in top3:
-        slots[pos] = (name, int(total))
-    n1,g1=slots[1]; n2,g2=slots[2]; n3,g3=slots[3]
-    w=18
-    return "\n".join([
+        slots[int(pos)] = (str(name), int(total))
+
+    n1, g1 = slots[1]
+    n2, g2 = slots[2]
+    n3, g3 = slots[3]
+    w = 11
+    gap = "  "
+
+    def row(a="", b="", c=""):
+        return f"{_podium_cell(a,w)}{gap}{_podium_cell(b,w)}{gap}{_podium_cell(c,w)}"
+
+    def gold(v):
+        # Format court pour préserver la géométrie du podium.
+        if v >= 1_000_000_000:
+            return f"{v/1_000_000_000:.1f}Md G".replace(".0", "")
+        if v >= 1_000_000:
+            return f"{v/1_000_000:.1f}M G".replace(".0", "")
+        if v >= 1_000:
+            return f"{v/1_000:.1f}k G".replace(".0", "")
+        return f"{v} G"
+
+    lines = [
         "```",
-        f"{_podium_cell(n2,w)} {_podium_cell(n1,w)} {_podium_cell(n3,w)}",
-        f"{_podium_cell('🥈 '+format(g2, ',').replace(',', ' ')+' G',w)} {_podium_cell('🥇 '+format(g1, ',').replace(',', ' ')+' G',w)} {_podium_cell('🥉 '+format(g3, ',').replace(',', ' ')+' G',w)}",
-        f"{'':{w}} {'┏━━━━━━━━━━━━━━━━┓':^{w}} {'':{w}}",
-        f"{'┏━━━━━━━━━━━━━━━━┓':^{w}} {'┃       1        ┃':^{w}} {'':{w}}",
-        f"{'┃       2        ┃':^{w}} {'┃                ┃':^{w}} {'┏━━━━━━━━━━━━━━━━┓':^{w}}",
-        f"{'┃                ┃':^{w}} {'┃                ┃':^{w}} {'┃       3        ┃':^{w}}",
-        f"{'┗━━━━━━━━━━━━━━━━┛':^{w}} {'┗━━━━━━━━━━━━━━━━┛':^{w}} {'┗━━━━━━━━━━━━━━━━┛':^{w}}",
+        row(n2, n1, n3),
+        row(gold(g2), gold(g1), gold(g3)),
+        row("", "┌─────────┐", ""),
+        row("", "│    1    │", ""),
+        row("┌─────────┐", "│         │", "┌─────────┐"),
+        row("│    2    │", "│         │", "│    3    │"),
+        row("│         │", "│         │", "│         │"),
+        row("└─────────┘", "└─────────┘", "└─────────┘"),
         "```",
-    ])
+    ]
+    return "\n".join(lines)
 
 async def show_castle_podium(interaction):
     rows=CASTLE_STORE.leaderboard(3)
@@ -6395,23 +6421,89 @@ _LegacyAdminAccessSelect = AdminAccessSelect
 _LegacyAdminPlayerProfileSelect = AdminPlayerProfileSelect
 
 async def _v211_member(guild, raw: str):
-    if not guild: return None
-    raw=''.join(ch for ch in str(raw) if ch.isdigit())
-    if not raw: return None
-    uid=int(raw); m=guild.get_member(uid)
-    if m: return m
-    try: return await guild.fetch_member(uid)
-    except Exception: return None
+    """Résout un membre par pseudo Discord / pseudo serveur.
+
+    L'ID reste accepté en secours pour compatibilité interne, mais les interfaces
+    joueur/admin n'ont plus besoin de l'afficher ni de le demander.
+    """
+    if not guild:
+        return None
+    query = str(raw or "").strip()
+    if not query:
+        return None
+
+    # Compatibilité silencieuse avec les anciens appels qui fournissent un ID.
+    digits = ''.join(ch for ch in query if ch.isdigit())
+    if digits == query and len(digits) >= 5:
+        uid = int(digits)
+        member = guild.get_member(uid)
+        if member:
+            return member
+        try:
+            return await guild.fetch_member(uid)
+        except Exception:
+            return None
+
+    q = query.casefold()
+    members = list(getattr(guild, "members", []) or [])
+
+    def names(m):
+        vals = [getattr(m, "display_name", ""), getattr(m, "name", "")]
+        global_name = getattr(m, "global_name", None)
+        if global_name:
+            vals.append(global_name)
+        return [str(v).strip() for v in vals if v]
+
+    # 1) correspondance exacte : pseudo serveur, nom global ou username.
+    exact = [m for m in members if any(n.casefold() == q for n in names(m))]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        return ("ambiguous", exact[:10])
+
+    # 2) début du pseudo, plus naturel pour une recherche admin rapide.
+    starts = [m for m in members if any(n.casefold().startswith(q) for n in names(m))]
+    if len(starts) == 1:
+        return starts[0]
+    if len(starts) > 1:
+        return ("ambiguous", starts[:10])
+
+    # 3) recherche partielle.
+    partial = [m for m in members if any(q in n.casefold() for n in names(m))]
+    if len(partial) == 1:
+        return partial[0]
+    if len(partial) > 1:
+        return ("ambiguous", partial[:10])
+    return None
 
 class _V211MemberModal(discord.ui.Modal):
     def __init__(self, title: str, handler):
         super().__init__(title=title); self.handler=handler
-        self.member=discord.ui.TextInput(label="ID Discord du joueur",placeholder="Ex : 666805849011912705",min_length=5,max_length=24)
+        self.member=discord.ui.TextInput(
+            label="Nom du joueur",
+            placeholder="Ex : Mor.Gan",
+            min_length=1,
+            max_length=64,
+        )
         self.add_item(self.member)
+
     async def on_submit(self, i):
-        m=await _v211_member(i.guild,self.member.value)
-        if not m: return await i.response.send_message("❌ Joueur introuvable. Active le mode développeur Discord puis copie son ID.",ephemeral=True)
-        await self.handler(i,m)
+        result = await _v211_member(i.guild, self.member.value)
+        if isinstance(result, tuple) and result and result[0] == "ambiguous":
+            matches = result[1]
+            names = "\n".join(f"• **{m.display_name}** (@{m.name})" for m in matches[:8])
+            return await i.response.send_message(
+                "⚠️ **Plusieurs joueurs correspondent à cette recherche.**\n"
+                "Précise davantage le nom :\n" + names,
+                ephemeral=True,
+            )
+        if not result:
+            return await i.response.send_message(
+                f"❌ Aucun joueur trouvé pour **{self.member.value.strip()}**.\n"
+                "Essaie son pseudo affiché sur le serveur ou son nom Discord.",
+                ephemeral=True,
+            )
+        await self.handler(i, result)
 
 class TavernDrinksView(discord.ui.View):
     def __init__(self, user_id: int | None = None):
@@ -6430,7 +6522,7 @@ class TavernDrinksView(discord.ui.View):
 class TavernFriendSelectView(discord.ui.View):
     def __init__(self, owner_id:int, game_type:str):
         super().__init__(timeout=90); self.owner_id=int(owner_id); self.game_type=game_type
-        b=discord.ui.Button(label="Choisir l’ami par ID",emoji="🤝",style=discord.ButtonStyle.primary)
+        b=discord.ui.Button(label="Rechercher un ami",emoji="🤝",style=discord.ButtonStyle.primary)
         async def cb(i):
             if i.user.id!=self.owner_id: return await i.response.send_message("Cette préparation appartient à un autre joueur.",ephemeral=True)
             async def picked(ii,m):
@@ -6500,7 +6592,7 @@ class FriendLobbyView(_FriendLobbyViewBase):
 class ThiefTargetView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
-        b=discord.ui.Button(label="Choisir la cible par ID",emoji="🐺",style=discord.ButtonStyle.danger)
+        b=discord.ui.Button(label="Rechercher une cible",emoji="🐺",style=discord.ButtonStyle.danger)
         async def cb(i):
             async def picked(ii,m):
                 sel=_LegacyThiefTargetSelect(); sel._values=[m]; await sel.callback(ii)
@@ -6533,7 +6625,7 @@ class AdminAchievementView(discord.ui.View):
 class AdminTargetView(discord.ui.View):
     def __init__(self,action:str):
         super().__init__(timeout=180); self.action=action
-        b=discord.ui.Button(label="Choisir le joueur par ID",emoji="👤",style=discord.ButtonStyle.primary)
+        b=discord.ui.Button(label="Rechercher un joueur",emoji="👤",style=discord.ButtonStyle.primary)
         async def cb(i):
             async def picked(ii,m):
                 x=_LegacyAdminTargetSelect(self.action); x._values=[m]; await x.callback(ii)
@@ -6543,7 +6635,7 @@ class AdminTargetView(discord.ui.View):
 class AdminAccessPickView(discord.ui.View):
     def __init__(self,mode:str):
         super().__init__(timeout=180); self.mode=mode
-        b=discord.ui.Button(label="Choisir le joueur par ID",emoji="👥",style=discord.ButtonStyle.primary)
+        b=discord.ui.Button(label="Rechercher un joueur",emoji="👥",style=discord.ButtonStyle.primary)
         async def cb(i):
             async def picked(ii,m): x=_LegacyAdminAccessSelect(self.mode); x._values=[m]; await x.callback(ii)
             await i.response.send_modal(_V211MemberModal("Accès /admin",picked))
@@ -6552,7 +6644,7 @@ class AdminAccessPickView(discord.ui.View):
 class AdminPlayersView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
-        b=discord.ui.Button(label="Ouvrir un profil par ID",emoji="👤",style=discord.ButtonStyle.primary)
+        b=discord.ui.Button(label="Rechercher un joueur",emoji="👤",style=discord.ButtonStyle.primary)
         async def cb(i):
             async def picked(ii,m): await show_admin_player_profile(ii,int(m.id))
             await i.response.send_modal(_V211MemberModal("Profil joueur",picked))
