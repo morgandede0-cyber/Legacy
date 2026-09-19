@@ -44,6 +44,7 @@ from job_board_engine import JobBoardStore, RARITIES as JOB_RARITIES
 import legacy_world_forge as WORLD_FORGE
 import tower_engine as TOWER
 from world_engine import current_event, destination_name, destination_description
+from ui_v2 import container as v2_container, header as v2_header, separator as v2_separator, media_gallery as v2_media_gallery, action_row as v2_action_row
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 GUILD_ID = os.getenv("GUILD_ID", "").strip()
 PLACES = BASE / "assets" / "places"
@@ -412,6 +413,112 @@ class HubView(discord.ui.View):
                 await interaction.response.send_message(embed=embed, file=file, view=WorldHubView(private_session=True), ephemeral=True)
         world.callback = world_cb
         self.add_item(world)
+
+
+# ============================================================
+# V2.10 — HUBS COMPONENTS V2
+# Les anciennes classes restent au-dessus pour compatibilité historique,
+# mais les alias ci-dessous deviennent les interfaces actives.
+# ============================================================
+class WorldHubV2(discord.ui.LayoutView):
+    """Carte d'Elyndor en Components V2 — aucune liste déroulante."""
+    def __init__(self, private_session: bool = False):
+        super().__init__(timeout=None if not private_session else 1800)
+        self.private_session = bool(private_session)
+
+        panel = v2_container(
+            v2_header("🌍 ELYNDOR", "Choisis ta destination et écris ta propre légende."),
+            v2_media_gallery("elyndor_map.png", "Carte du monde d'Elyndor"),
+            v2_separator(True),
+            colour=0xB67A2A,
+        )
+
+        specs = [
+            ("city", "👑 ALTHERYA", "Capitale du royaume • commerce • taverne • arène", "Entrer", "👑", discord.ButtonStyle.primary),
+            ("elarwyn", "🌲 FORÊT D'ELARWYN", "Terres sauvages • exploration • expéditions", "Explorer", "🌲", discord.ButtonStyle.success),
+            ("vorak", "🏔️ MONT VORAK", "Pics hostiles • ressources • dangers", "Explorer", "🏔️", discord.ButtonStyle.secondary),
+            ("khaz", "⚒️ KHAZ'GORAM", "Forge légendaire • amélioration d'équipement", "Voyager", "⚒️", discord.ButtonStyle.secondary),
+            ("ashkar", "🗼 TOUR D'ASHKAR", "Épreuves • classes • progression", "Entrer", "🗼", discord.ButtonStyle.danger),
+        ]
+        for key, title, desc, label, emoji, style in specs:
+            b = discord.ui.Button(label=label, emoji=emoji, style=style, custom_id=f"altherya:v210:world:{key}")
+            async def cb(interaction: discord.Interaction, destination=key):
+                if destination == "city":
+                    file = discord.File(PLACES / "hub.png", filename="altherya_city.png")
+                    view = CityHubV2(private_session=True)
+                    if self.private_session:
+                        await interaction.response.edit_message(content=None, embeds=[], attachments=[file], view=view)
+                    else:
+                        await interaction.response.send_message(file=file, view=view, ephemeral=True)
+                    return
+                if destination == "khaz":
+                    level = CASTLE_STORE.current_level(interaction.user.id)
+                    if level < 3:
+                        await interaction.response.send_message(f"🔒 **KHAZ'GORAM** se débloque au niveau **3**. Ton niveau : **{level}**.", ephemeral=True)
+                        return
+                    file = discord.File(WORLD_FORGE.KHAZ_GORAM, filename="khaz_goram.png")
+                    embed = discord.Embed(title="⚒️ La Forge de KHAZ'GORAM", description="Thorgar façonne ici les équipements des légendes.", color=0xB67A2A)
+                    embed.set_image(url="attachment://khaz_goram.png")
+                    if self.private_session:
+                        await interaction.response.edit_message(content=None, embed=embed, attachments=[file], view=WORLD_FORGE.KhazGoramView())
+                    else:
+                        await interaction.response.send_message(embed=embed, file=file, view=WORLD_FORGE.KhazGoramView(), ephemeral=True)
+                    return
+                if destination == "ashkar":
+                    await TOWER.show_lobby(interaction, edit=self.private_session)
+                    return
+                await open_exploration_location(interaction, destination, edit=self.private_session)
+            b.callback = cb
+            panel.add_item(discord.ui.Section(f"### {title}\n{desc}", accessory=b))
+            if key != specs[-1][0]:
+                panel.add_item(v2_separator())
+        self.add_item(panel)
+
+
+class CityHubV2(discord.ui.LayoutView):
+    """Cité d'Altherya — destinations contextualisées et boutons locaux."""
+    def __init__(self, private_session: bool = True):
+        super().__init__(timeout=1800 if private_session else None)
+        self.private_session = bool(private_session)
+        panel = v2_container(
+            v2_header("🏰 ALTHERYA", "La cité est ton point d'ancrage. Choisis un lieu."),
+            v2_media_gallery("altherya_city.png", "Vue de la cité d'Altherya"),
+            v2_separator(True),
+            colour=0xB67A2A,
+        )
+        descriptions = {
+            "market": "Achète, vends et équipe ton aventurier.",
+            "tavern": "Bois, joue, défie tes amis et écoute le Troubadour.",
+            "bank": "Protège tes Gold et consulte ton coffre.",
+            "arena": "Affronte le Champion ou un autre joueur.",
+            "expeditions": "Contrats, ressources et départs vers les terres sauvages.",
+            "alley": "Marché clandestin, risques et affaires douteuses.",
+            "castle": "Quêtes, progression et institutions du royaume.",
+        }
+        for key, data in DESTINATIONS.items():
+            b = discord.ui.Button(label="Entrer", emoji=data["emoji"], style=discord.ButtonStyle.primary if key in {"tavern","arena","castle"} else discord.ButtonStyle.secondary, custom_id=f"altherya:v210:city:{key}")
+            async def cb(interaction: discord.Interaction, destination=key):
+                await travel(interaction, destination, edit=True)
+            b.callback = cb
+            panel.add_item(discord.ui.Section(f"### {data['emoji']} {data['label'].upper()}\n{descriptions.get(key, 'Explorer ce lieu.')}", accessory=b))
+            panel.add_item(v2_separator())
+
+        world = discord.ui.Button(label="Monde d'Elyndor", emoji="🌍", style=discord.ButtonStyle.secondary, custom_id="altherya:v210:city:world")
+        board = discord.ui.Button(label="Panneau central", emoji="📋", style=discord.ButtonStyle.primary, custom_id="altherya:v210:city:board")
+        async def world_cb(interaction: discord.Interaction):
+            file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
+            await interaction.response.edit_message(content=None, embeds=[], attachments=[file], view=WorldHubV2(private_session=True))
+        async def board_cb(interaction: discord.Interaction):
+            await safe_defer(interaction)
+            await show_central_board(interaction)
+        world.callback = world_cb; board.callback = board_cb
+        panel.add_item(v2_action_row(board, world))
+        self.add_item(panel)
+
+
+# Interfaces actives à partir de V2.10.
+WorldHubView = WorldHubV2
+HubView = CityHubV2
 
 class TavernView(discord.ui.View):
     def __init__(self):
@@ -5116,14 +5223,9 @@ def _save_hub_state(guild_id: int, channel_id: int, message_id: int):
     )
 
 async def _publish_hub(channel: discord.abc.Messageable) -> discord.Message:
+    # V2.10 : le texte et l'image vivent directement dans le LayoutView.
     file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
-    embed = discord.Embed(
-        title="🌍 Le Monde d'Elyndor",
-        description="Le brouillard recouvre encore une grande partie d’Elyndor. Explore **Altherya**, la **Forêt d’Elarwyn**, le **Mont Vorak**, **KHAZ'GORAM** et **La Tour d’Ashkar**.",
-        color=0xB67A2A,
-    )
-    embed.set_image(url="attachment://elyndor_map.png")
-    return await channel.send(embed=embed, file=file, view=WorldHubView())
+    return await channel.send(file=file, view=WorldHubView())
 
 async def ensure_fixed_hub():
     """Réactive le Hub configuré après un redémarrage du bot."""
@@ -5135,11 +5237,9 @@ async def ensure_fixed_hub():
     try:
         channel = bot.get_channel(int(channel_id)) or await bot.fetch_channel(int(channel_id))
         message = await channel.fetch_message(int(message_id))
-        embed = discord.Embed(title="🌍 Le Monde d'Elyndor", description="Le brouillard recouvre encore une grande partie d’Elyndor. Explore **Altherya**, la **Forêt d’Elarwyn**, le **Mont Vorak**, **KHAZ'GORAM** et **La Tour d’Ashkar**.", color=0xB67A2A)
-        embed.set_image(url="attachment://elyndor_map.png")
         file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
         await message.edit(
-            content=None, embed=embed, attachments=[file], view=WorldHubView(),
+            content=None, embeds=[], attachments=[file], view=WorldHubView(),
         )
     except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
         # Le Hub a probablement été supprimé ou le salon n'est plus accessible.
