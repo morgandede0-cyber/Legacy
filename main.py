@@ -1890,13 +1890,7 @@ class StoryMarketView(discord.ui.View):
 
 
 async def show_story_market_item(interaction: discord.Interaction, index: int):
-    file = discord.File(PLACES/"market.png", filename="marche.png")
-    await interaction.edit_original_response(
-        content=None,
-        attachments=[file],
-        embed=story_market_embed(interaction.user.id, index),
-        view=StoryMarketView(interaction.user.id, index),
-    )
+    await edit_v2_surface(interaction, path=PLACES/"market.png", filename="marche.png", embed=story_market_embed(interaction.user.id,index), view=StoryMarketView(interaction.user.id,index), title="📖 HISTOIRE DU MARCHÉ")
 
 
 class MarketView(discord.ui.View):
@@ -1935,25 +1929,25 @@ class MarketBuyView(discord.ui.View):
                     return await i.response.send_message("Ce marché appartient à un autre joueur.",ephemeral=True)
                 items2=available_starter_items(self.owner_id)
                 if not items2:
-                    return await i.response.edit_message(content=None,embed=market_buy_embed(self.owner_id,0),view=MarketBuyView(self.owner_id,0))
+                    await safe_defer(i); return await edit_v2_surface(i,path=PLACES/"market.png",filename="marche.png",embed=market_buy_embed(self.owner_id,0),view=MarketBuyView(self.owner_id,0),title="🛒 MARCHÉ D’ALTHERYA")
                 self.index=(self.index-1)%len(items2)
-                await i.response.edit_message(content=None,embed=market_buy_embed(self.owner_id,self.index),view=self)
+                await safe_defer(i); await edit_v2_surface(i,path=PLACES/"market.png",filename="marche.png",embed=market_buy_embed(self.owner_id,self.index),view=self,title="🛒 MARCHÉ D’ALTHERYA")
 
             async def next_cb(i):
                 if i.user.id!=self.owner_id:
                     return await i.response.send_message("Ce marché appartient à un autre joueur.",ephemeral=True)
                 items2=available_starter_items(self.owner_id)
                 if not items2:
-                    return await i.response.edit_message(content=None,embed=market_buy_embed(self.owner_id,0),view=MarketBuyView(self.owner_id,0))
+                    await safe_defer(i); return await edit_v2_surface(i,path=PLACES/"market.png",filename="marche.png",embed=market_buy_embed(self.owner_id,0),view=MarketBuyView(self.owner_id,0),title="🛒 MARCHÉ D’ALTHERYA")
                 self.index=(self.index+1)%len(items2)
-                await i.response.edit_message(content=None,embed=market_buy_embed(self.owner_id,self.index),view=self)
+                await safe_defer(i); await edit_v2_surface(i,path=PLACES/"market.png",filename="marche.png",embed=market_buy_embed(self.owner_id,self.index),view=self,title="🛒 MARCHÉ D’ALTHERYA")
 
             async def buy_cb(i):
                 if i.user.id!=self.owner_id:
                     return await i.response.send_message("Ce marché appartient à un autre joueur.",ephemeral=True)
                 items2=available_starter_items(self.owner_id)
                 if not items2:
-                    return await i.response.edit_message(content=None,embed=market_buy_embed(self.owner_id,0),view=MarketBuyView(self.owner_id,0))
+                    await safe_defer(i); return await edit_v2_surface(i,path=PLACES/"market.png",filename="marche.png",embed=market_buy_embed(self.owner_id,0),view=MarketBuyView(self.owner_id,0),title="🛒 MARCHÉ D’ALTHERYA")
 
                 item=items2[self.index%len(items2)]
                 await safe_defer(i)
@@ -1969,11 +1963,7 @@ class MarketBuyView(discord.ui.View):
                 remaining=available_starter_items(self.owner_id)
                 new_index=0 if not remaining else min(self.index,len(remaining)-1)
                 notice=("✅ **"+msg+"**") if ok else ("❌ **"+msg+"**")
-                await i.edit_original_response(
-                    content=None,
-                    embed=market_buy_embed(self.owner_id,new_index,notice),
-                    view=MarketBuyView(self.owner_id,new_index),
-                )
+                await edit_v2_surface(i,path=PLACES/"market.png",filename="marche.png",embed=market_buy_embed(self.owner_id,new_index,notice),view=MarketBuyView(self.owner_id,new_index),title="🛒 MARCHÉ D’ALTHERYA")
 
             prev.callback=prev_cb; buy.callback=buy_cb; nxt.callback=next_cb
             self.add_item(prev); self.add_item(buy); self.add_item(nxt)
@@ -1989,13 +1979,7 @@ class MarketBuyView(discord.ui.View):
 async def show_market_item(interaction,index:int):
     # On conserve exactement la photo actuelle du marchand.
     # Seule la zone de sélection passe en carrousel graphique Discord (Embed + boutons).
-    file=discord.File(PLACES/"market.png",filename="marche.png")
-    await interaction.edit_original_response(
-        content=None,
-        attachments=[file],
-        embed=market_buy_embed(interaction.user.id,index),
-        view=MarketBuyView(interaction.user.id,index),
-    )
+    await edit_v2_surface(interaction, path=PLACES/"market.png", filename="marche.png", embed=market_buy_embed(interaction.user.id,index), view=MarketBuyView(interaction.user.id,index), title="🛒 MARCHÉ D’ALTHERYA")
 
 
 class ResourceSellModal(discord.ui.Modal,title="Vendre une ressource"):
@@ -2925,13 +2909,13 @@ class ForgeUpgradeView(discord.ui.View):
             if i.user.id!=self.owner_id:
                 return await i.response.send_message("Cette forge appartient à un autre joueur.",ephemeral=True)
             self.index=(self.index-1)%len(keys)
-            await i.response.edit_message(content=None,embed=forge_carousel_embed(self.owner_id,self.index),view=ForgeUpgradeView(self.owner_id,self.index))
+            await safe_defer(i); await edit_v2_surface(i,path=PLACES/"forge.png",filename="forge.png",embed=forge_carousel_embed(self.owner_id,self.index),view=ForgeUpgradeView(self.owner_id,self.index),title="⚒️ FORGE D’ALTHERYA")
 
         async def next_cb(i):
             if i.user.id!=self.owner_id:
                 return await i.response.send_message("Cette forge appartient à un autre joueur.",ephemeral=True)
             self.index=(self.index+1)%len(keys)
-            await i.response.edit_message(content=None,embed=forge_carousel_embed(self.owner_id,self.index),view=ForgeUpgradeView(self.owner_id,self.index))
+            await safe_defer(i); await edit_v2_surface(i,path=PLACES/"forge.png",filename="forge.png",embed=forge_carousel_embed(self.owner_id,self.index),view=ForgeUpgradeView(self.owner_id,self.index),title="⚒️ FORGE D’ALTHERYA")
 
         async def improve_cb(i):
             if i.user.id!=self.owner_id:
@@ -2951,11 +2935,7 @@ class ForgeUpgradeView(discord.ui.View):
                 await announce_achievement(i, f"gear:{key2}:{target}")
                 await announce_gold_activity(i.guild, i.user, after_gold-before_gold, f"Amélioration à la Forge : {_gear_name(key2,target)}")
             notice=("✅ **"+msg+"**") if ok else ("❌ **"+msg+"**")
-            await i.edit_original_response(
-                content=None,
-                embed=forge_carousel_embed(self.owner_id,self.index,notice),
-                view=ForgeUpgradeView(self.owner_id,self.index),
-            )
+            await edit_v2_surface(i,path=PLACES/"forge.png",filename="forge.png",embed=forge_carousel_embed(self.owner_id,self.index,notice),view=ForgeUpgradeView(self.owner_id,self.index),title="⚒️ FORGE D’ALTHERYA")
             if ok:
                 await show_pending_levelups(i, self.owner_id)
 
@@ -2975,13 +2955,7 @@ class ForgeUpgradeView(discord.ui.View):
 async def show_forge_carousel(interaction,index:int):
     # Même principe que le Marché : on conserve la photo de la Forge,
     # et seule la sélection d'équipement devient un carrousel graphique Discord.
-    file=discord.File(PLACES/"forge.png",filename="forge.png")
-    await interaction.edit_original_response(
-        content=None,
-        attachments=[file],
-        embed=forge_carousel_embed(interaction.user.id,index),
-        view=ForgeUpgradeView(interaction.user.id,index),
-    )
+    await edit_v2_surface(interaction, path=PLACES/"forge.png", filename="forge.png", embed=forge_carousel_embed(interaction.user.id,index), view=ForgeUpgradeView(interaction.user.id,index), title="⚒️ FORGE D’ALTHERYA")
 
 
 def forge_upgrade_content(user_id:int,key:str)->str:
@@ -4981,16 +4955,80 @@ class PlaceView(discord.ui.View):
         back.callback = go_back
         self.add_item(back)
 
+
+
+# ============================================================
+# V2.15 — ADAPTATEUR GLOBAL COMPONENTS V2
+# Transforme les surfaces historiques texte/image/boutons en vrais LayoutView V2.
+# Aucun Select n'est rendu : les choix sont exposés par boutons/pagination/modals.
+# ============================================================
+def _legacy_view_to_v2(view: discord.ui.View, *, content: str | None = None, filename: str | None = None, title: str | None = None, accent: int = 0xB67A2A) -> discord.ui.LayoutView:
+    out = discord.ui.LayoutView(timeout=getattr(view, 'timeout', 1800))
+    children = []
+    if title:
+        children.append(discord.ui.TextDisplay(f"# {title}"))
+    if content:
+        children.append(discord.ui.TextDisplay(content))
+    if filename:
+        gallery = discord.ui.MediaGallery()
+        gallery.add_item(media=f"attachment://{filename}", description=title or "Altherya")
+        children.append(gallery)
+    children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
+    buttons=[]
+    for item in list(getattr(view, 'children', [])):
+        if isinstance(item, discord.ui.Button):
+            buttons.append(item)
+    # Discord V2 : lignes compactes de 5 boutons maximum.
+    for i in range(0, len(buttons), 5):
+        children.append(discord.ui.ActionRow(*buttons[i:i+5]))
+    if not buttons:
+        children.append(discord.ui.TextDisplay("*Aucune action disponible sur cet écran.*"))
+    out.add_item(discord.ui.Container(*children, accent_colour=accent))
+    return out
+
+def _place_title_from_filename(filename: str) -> str:
+    labels={
+        'taverne.png':'🍺 TAVERNE D’ALTHERYA','barman.png':'🍺 COMPTOIR DE LA TAVERNE','table_jeux.png':'🎲 TABLE DE JEUX',
+        'troubadour.png':'📖 LE TROUBADOUR','marche.png':'🛒 MARCHÉ D’ALTHERYA','banque.png':'🏦 BANQUE ROYALE',
+        'arene.png':'⚔️ ARÈNE D’ALTHERYA','champion_legacy.png':'👑 CHAMPION DE L’ARÈNE','forge.png':'⚒️ FORGE D’ALTHERYA',
+        'expeditions.png':'📌 PETITES ANNONCES','ruelle.png':'🌑 RUELLE SOMBRE','voleur.png':'🐺 LE VOLEUR',
+        'braqueur.png':'🐯 LE BRAQUEUR','vigile.png':'🐻 LE VIGILE','castle.png':'🏰 CHÂTEAU D’ALTHERYA','lieu.png':'🏰 ALTHÉRYA'
+    }
+    return labels.get(filename, '🏰 ALTHÉRYA')
+
+
+
+def _embed_text_v2(embed: discord.Embed | None) -> str:
+    if embed is None:
+        return ""
+    parts=[]
+    if getattr(embed, "title", None): parts.append(f"## {embed.title}")
+    if getattr(embed, "description", None): parts.append(str(embed.description))
+    for f in getattr(embed, "fields", []):
+        parts.append(f"**{f.name}**\n{f.value}")
+    footer=getattr(getattr(embed,"footer",None),"text",None)
+    if footer: parts.append(f"*{footer}*")
+    return "\n\n".join(parts)
+
+async def edit_v2_surface(interaction: discord.Interaction, *, view: discord.ui.View, content: str | None=None, embed: discord.Embed | None=None, path: Path | None=None, filename: str | None=None, title: str | None=None):
+    text="\n\n".join(x for x in (content, _embed_text_v2(embed)) if x)
+    files=[]
+    if path is not None and filename:
+        files=[discord.File(path,filename=filename)]
+    v2=_legacy_view_to_v2(view,content=text or None,filename=filename if files else None,title=title)
+    await interaction.edit_original_response(content=None,attachments=files,embeds=[],view=v2)
+
 async def edit_with_asset(interaction: discord.Interaction, path: Path, filename: str, view: discord.ui.View, content: str | None=None):
     file = discord.File(path, filename=filename)
     # Les sous-menus (Marché/Forge/etc.) utilisent parfois des embeds.
     # Quand on change de lieu ou qu'on revient au Hub, on les efface explicitement
     # pour éviter qu'une ancienne fiche reste affichée sous la nouvelle image.
+    v2view = _legacy_view_to_v2(view, content=content, filename=filename, title=_place_title_from_filename(filename))
     await interaction.edit_original_response(
-        content=content,
+        content=None,
         attachments=[file],
         embeds=[],
-        view=view,
+        view=v2view,
     )
 
 EVENTS = BASE / "assets" / "events"
@@ -5189,16 +5227,12 @@ async def _send_personal_place(interaction: discord.Interaction, destination: st
         f"{data['emoji']} **{data['label']} de Altherya**"
     )
     file = discord.File(image, filename="lieu.png")
+    v2view = _legacy_view_to_v2(view, content=content, filename="lieu.png", title=f"{data['emoji']} {data['label'].upper()} — ALTHÉRYA")
     if edit:
-        # Components V2: acquitter immédiatement l'interaction avant de construire/éditer
-        # un ancien sous-écran discord.ui.View. Cela évite le timeout « n'a pas répondu »
-        # lors du passage Hub V2 -> Arène/Banque/Taverne/etc.
         await safe_defer(interaction)
-        await interaction.edit_original_response(
-            content=content, attachments=[file], embeds=[], view=view
-        )
+        await interaction.edit_original_response(content=None, attachments=[file], embeds=[], view=v2view)
     else:
-        await interaction.response.send_message(content=content, file=file, view=view, ephemeral=True)
+        await interaction.response.send_message(file=file, view=v2view, ephemeral=True)
 
 async def travel(interaction: discord.Interaction, destination: str, *, edit: bool = False):
     # Depuis le Hub public : création d'une unique session privée.
@@ -5211,12 +5245,12 @@ async def return_to_hub(interaction: discord.Interaction):
     try:
         if not interaction.response.is_done():
             await interaction.response.edit_message(
-                content="🏙️ **Altherya**\nBienvenue dans la cité. Choisis ta destination.",
+                content=None,
                 attachments=[file], embeds=[], view=HubView(private_session=True),
             )
         else:
             await interaction.edit_original_response(
-                content="🏙️ **Altherya**\nBienvenue dans la cité. Choisis ta destination.",
+                content=None,
                 attachments=[file], embeds=[], view=HubView(private_session=True),
             )
     except (discord.NotFound, discord.HTTPException):
@@ -6405,7 +6439,8 @@ class MarketSellView(discord.ui.View):
             self.add_item(discord.ui.Button(label="Aucune ressource vendable",disabled=True,style=discord.ButtonStyle.secondary))
         prev=discord.ui.Button(label="Précédent",emoji="◀️",style=discord.ButtonStyle.secondary,disabled=self.page<=0)
         nxt=discord.ui.Button(label="Suivant",emoji="▶️",style=discord.ButtonStyle.secondary,disabled=self.page>=pages-1)
-        async def nav(i,d): await i.response.edit_message(view=MarketSellView(self.owner_id,self.page+d))
+        async def nav(i,d):
+            await safe_defer(i); await edit_with_asset(i,PLACES/"market.png","marche.png",MarketSellView(self.owner_id,self.page+d),market_sell_content(self.owner_id))
         prev.callback=lambda i: nav(i,-1); nxt.callback=lambda i: nav(i,1); self.add_item(prev); self.add_item(nxt)
         back=discord.ui.Button(label="Retour au marché",emoji="↩️",style=discord.ButtonStyle.secondary)
         async def bk(i): await safe_defer(i); await edit_with_asset(i,PLACES/"market.png","marche.png",MarketView(),"🛒 **Marché de Altherya**\nQue veux-tu faire ?"+npc_alcohol_reaction(i.user.id,"marchand"))
@@ -6432,7 +6467,7 @@ class ChampionClassView(_ChampionClassViewBase):
         for key,c in CLASSES.items():
             b=discord.ui.Button(label=c['name'],emoji=c['emoji'],style=discord.ButtonStyle.primary)
             async def cb(i,k=key):
-                self.class_key=k; await i.response.edit_message(content=f"👑 **Défi du Champion**\nMise : **{_gold(self.wager)} Gold**\nClasse : {class_line(k)}\n\nQuand tu es prêt, valide le combat.",view=self)
+                self.class_key=k; await safe_defer(i); await edit_with_asset(i,PLACES/"arena_champion.png","champion_legacy.png",self,f"👑 **Défi du Champion**\nMise : **{_gold(self.wager)} Gold**\nClasse : {class_line(k)}\n\nQuand tu es prêt, valide le combat.")
             b.callback=cb; self.add_item(b)
 
 _FriendLobbyViewBase=FriendLobbyView
@@ -6445,7 +6480,7 @@ class FriendLobbyView(_FriendLobbyViewBase):
             b=discord.ui.Button(label=c['name'],emoji=c['emoji'],style=discord.ButtonStyle.primary)
             async def cb(i,k=key):
                 if i.user.id not in (self.p1,self.p2): return await i.response.send_message("Tu ne participes pas à ce défi.",ephemeral=True)
-                self.classes[i.user.id]=k; self.ready.discard(i.user.id); await i.response.edit_message(content=friend_lobby_content(self),view=self)
+                self.classes[i.user.id]=k; self.ready.discard(i.user.id); await safe_defer(i); await edit_with_asset(i,PLACES/"arena.png","arene.png",self,friend_lobby_content(self))
             b.callback=cb; self.add_item(b)
 
 class ThiefTargetView(discord.ui.View):

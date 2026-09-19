@@ -518,6 +518,19 @@ def render_equipment_grid(user_id: int, display_name: str, eq: Dict[str, dict], 
     return out
 
 # ============================================================
+# COMPONENTS V2 — renderer commun KHAZ'GORAM
+# ============================================================
+def _v2_view(view: discord.ui.View, *, title: str, description: str, filename: str | None=None):
+    out=discord.ui.LayoutView(timeout=getattr(view,"timeout",1800))
+    parts=[discord.ui.TextDisplay(f"# {title}\n{description}")]
+    if filename:
+        g=discord.ui.MediaGallery(); g.add_item(media=f"attachment://{filename}",description=title); parts.append(g)
+    parts.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
+    buttons=[x for x in getattr(view,"children",[]) if isinstance(x,discord.ui.Button)]
+    for n in range(0,len(buttons),5): parts.append(discord.ui.ActionRow(*buttons[n:n+5]))
+    out.add_item(discord.ui.Container(*parts,accent_colour=0xB67A2A)); return out
+
+# ============================================================
 # HELPERS
 # ============================================================
 async def edit_with_image(interaction: discord.Interaction, image_path: Path, *, title: str, description: str, view: discord.ui.View):
@@ -529,26 +542,19 @@ async def edit_with_image(interaction: discord.Interaction, image_path: Path, *,
     par Discord pour modifier le message ayant déclenché le bouton.
     """
     file = discord.File(image_path, filename=image_path.name)
-    embed = discord.Embed(title=title, description=description, color=0xB67A2A)
-    embed.set_image(url=f"attachment://{image_path.name}")
+    v2=_v2_view(view,title=title,description=description,filename=image_path.name)
     try:
         if not interaction.response.is_done():
-            await interaction.response.edit_message(embed=embed, attachments=[file], view=view)
+            await interaction.response.edit_message(content=None,embeds=[],attachments=[file],view=v2)
         else:
-            await interaction.edit_original_response(embed=embed, attachments=[file], view=view)
+            await interaction.edit_original_response(content=None,embeds=[],attachments=[file],view=v2)
     except discord.NotFound:
-        # Le message d'origine a réellement été supprimé : recrée une interface privée
-        # au lieu de faire planter toute la View.
-        fresh = discord.File(image_path, filename=image_path.name)
-        fresh_embed = discord.Embed(title=title, description=description, color=0xB67A2A)
-        fresh_embed.set_image(url=f"attachment://{image_path.name}")
-        await interaction.followup.send(embed=fresh_embed, file=fresh, view=view, ephemeral=True)
+        fresh=discord.File(image_path,filename=image_path.name)
+        await interaction.followup.send(file=fresh,view=v2,ephemeral=True)
 
 async def send_with_image(interaction: discord.Interaction, image_path: Path, *, title: str, description: str, view: discord.ui.View, ephemeral=False):
-    file = discord.File(image_path, filename=image_path.name)
-    embed = discord.Embed(title=title, description=description, color=0xB67A2A)
-    embed.set_image(url=f"attachment://{image_path.name}")
-    await interaction.response.send_message(embed=embed, file=file, view=view, ephemeral=ephemeral)
+    file=discord.File(image_path,filename=image_path.name)
+    await interaction.response.send_message(file=file,view=_v2_view(view,title=title,description=description,filename=image_path.name),ephemeral=ephemeral)
 
 # ============================================================
 # WORLD VIEWS
@@ -845,13 +851,12 @@ def render_piece_carousel(branch: str, slot: str, *, mode: str, eq: Dict[str, di
 
 
 async def _edit_carousel(interaction: discord.Interaction, image_path: Path, *, title: str, description: str, view: discord.ui.View):
-    file = discord.File(image_path, filename=image_path.name)
-    embed = discord.Embed(title=title, description=description, color=0xB67A2A)
-    embed.set_image(url=f"attachment://{image_path.name}")
+    file=discord.File(image_path,filename=image_path.name)
+    v2=_v2_view(view,title=title,description=description,filename=image_path.name)
     if not interaction.response.is_done():
-        await interaction.response.edit_message(embed=embed, attachments=[file], view=view)
+        await interaction.response.edit_message(content=None,embeds=[],attachments=[file],view=v2)
     else:
-        await interaction.edit_original_response(embed=embed, attachments=[file], view=view)
+        await interaction.edit_original_response(content=None,embeds=[],attachments=[file],view=v2)
 
 
 class ForgeOwnerView(discord.ui.View):
