@@ -4962,27 +4962,66 @@ class PlaceView(discord.ui.View):
 # Transforme les surfaces historiques texte/image/boutons en vrais LayoutView V2.
 # Aucun Select n'est rendu : les choix sont exposés par boutons/pagination/modals.
 # ============================================================
+def _v2_action_description(button: discord.ui.Button) -> str:
+    """Micro-description immersive utilisée par toutes les cartes d'action V2."""
+    cid = str(getattr(button, "custom_id", "") or "").lower()
+    label = str(getattr(button, "label", "Action") or "Action").lower()
+    key = f"{cid} {label}"
+    rules = [
+        (("retour", "back", "quitter", "leave"), "Reviens à l’écran précédent sans perdre ta progression."),
+        (("acheter", "buy", "boutique", "marché"), "Consulte les offres disponibles et prépare ton équipement."),
+        (("vendre", "sell", "revente"), "Transforme les ressources de ton inventaire en Gold."),
+        (("banque", "coffre", "déposer", "retirer"), "Gère tes Gold et sécurise ta fortune."),
+        (("forge", "amélior", "upgrade"), "Renforce ton équipement et prépare les prochaines épreuves."),
+        (("combat", "combatt", "arène", "défi", "attaqu"), "Prépare-toi au combat et choisis ta prochaine action."),
+        (("boire", "boisson", "bar", "comptoir"), "Approche du comptoir et découvre ce que sert le tavernier."),
+        (("jeu", "jouer", "table"), "Tente ta chance face aux habitués de la taverne."),
+        (("troubadour", "histoire", "story"), "Écoute les récits, rumeurs et histoires du royaume."),
+        (("quête", "mission", "contrat", "annonce"), "Consulte les objectifs disponibles et leurs récompenses."),
+        (("explor", "forêt", "vorak", "voyager", "destination"), "Pars vers cette destination et découvre ses dangers."),
+        (("inventaire", "équipement", "profil", "fiche"), "Consulte tes possessions, tes statistiques et ta progression."),
+        (("récompense", "claim", "récupérer"), "Récupère la récompense disponible pour ton aventurier."),
+        (("confirmer", "valider", "continuer"), "Confirme ton choix et poursuis l’aventure."),
+    ]
+    for needles, desc in rules:
+        if any(n in key for n in needles):
+            return desc
+    return "Interagis avec ce lieu pour poursuivre ton aventure."
+
 def _legacy_view_to_v2(view: discord.ui.View, *, content: str | None = None, filename: str | None = None, title: str | None = None, accent: int = 0xB67A2A) -> discord.ui.LayoutView:
+    """Convertit une ancienne vue en écran RPG Components V2 à cartes d'action.
+
+    Chaque action devient une Section native avec son vrai bouton Discord en
+    accessoire. Cela donne le rendu « image + cartes interactives » sur tous
+    les lieux et sous-écrans sans modifier les mécaniques existantes.
+    """
     out = discord.ui.LayoutView(timeout=getattr(view, 'timeout', 1800))
     children = []
     if title:
         children.append(discord.ui.TextDisplay(f"# {title}"))
-    if content:
-        children.append(discord.ui.TextDisplay(content))
     if filename:
         gallery = discord.ui.MediaGallery()
         gallery.add_item(media=f"attachment://{filename}", description=title or "Altherya")
         children.append(gallery)
-    children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
-    buttons=[]
-    for item in list(getattr(view, 'children', [])):
-        if isinstance(item, discord.ui.Button):
-            buttons.append(item)
-    # Discord V2 : lignes compactes de 5 boutons maximum.
-    for i in range(0, len(buttons), 5):
-        children.append(discord.ui.ActionRow(*buttons[i:i+5]))
-    if not buttons:
+    if content:
+        children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
+        children.append(discord.ui.TextDisplay(content))
+
+    buttons = [item for item in list(getattr(view, 'children', [])) if isinstance(item, discord.ui.Button)]
+    if buttons:
+        children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
+        children.append(discord.ui.TextDisplay("## ⚜️ Actions disponibles"))
+        for index, button in enumerate(buttons):
+            emoji = str(getattr(button, 'emoji', '') or '◆')
+            label = str(getattr(button, 'label', None) or 'Action')
+            description = _v2_action_description(button)
+            children.append(discord.ui.Section(f"### {emoji} {label}\n{description}", accessory=button))
+            if index != len(buttons) - 1:
+                children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
+    else:
+        children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
         children.append(discord.ui.TextDisplay("*Aucune action disponible sur cet écran.*"))
+
     out.add_item(discord.ui.Container(*children, accent_colour=accent))
     return out
 
@@ -5241,7 +5280,7 @@ async def travel(interaction: discord.Interaction, destination: str, *, edit: bo
 
 async def return_to_hub(interaction: discord.Interaction):
     """Retourne à Altherya dans LA MÊME fenêtre privée, sans empiler de messages."""
-    file = discord.File(PLACES / "hub.png", filename="legacy.png")
+    file = discord.File(PLACES / "hub.png", filename="altherya_city.png")
     try:
         if not interaction.response.is_done():
             await interaction.response.edit_message(
