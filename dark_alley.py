@@ -15,6 +15,7 @@ from admin_engine import event_multiplier, cooldowns_enabled
 # =========================
 # Tout est centralisé ici pour pouvoir retoucher l'économie facilement.
 ACTION_COOLDOWN = 60 * 60          # vol et crime : 1 fois / heure, séparément
+LARCENY_COOLDOWN = 30 * 60         # petit larcin : 1 fois / 30 minutes
 ALLEY_BAN_SECONDS = 5 * 60 * 60    # échec du braquage : 5 h
 HEIST_ATTEMPTS = 7
 HEIST_CODE_LENGTH = 4
@@ -223,7 +224,8 @@ class DarkAlleyStore:
             ).fetchone()
         if not row:
             return 0
-        return max(0, int(row["last_used_at"]) + ACTION_COOLDOWN - int(time.time()))
+        cooldown = LARCENY_COOLDOWN if action_type == "larceny" else ACTION_COOLDOWN
+        return max(0, int(row["last_used_at"]) + cooldown - int(time.time()))
 
     def _consume_action(self, conn, user_id: int, action_type: str) -> tuple[bool, int]:
         if not cooldowns_enabled(self.db_path):
@@ -234,7 +236,8 @@ class DarkAlleyStore:
             (int(user_id), action_type),
         ).fetchone()
         if row:
-            remaining = int(row["last_used_at"]) + ACTION_COOLDOWN - now
+            cooldown = LARCENY_COOLDOWN if action_type == "larceny" else ACTION_COOLDOWN
+            remaining = int(row["last_used_at"]) + cooldown - now
             if remaining > 0:
                 return False, remaining
         conn.execute("""

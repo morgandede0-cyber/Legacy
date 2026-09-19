@@ -183,6 +183,15 @@ class JobBoardStore:
             )
             # La table players existe déjà dans l'économie. On la crée aussi ici
             # pour garantir une installation propre si ce module est initialisé seul.
+            # Migration V2.20 : une annonce acceptée devient une mission d'1 h à réclamer.
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(job_board_state)")}
+            for name, ddl in (
+                ("pending_job_json", "TEXT NOT NULL DEFAULT ''"),
+                ("reward_ready_at", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE job_board_state ADD COLUMN {name} {ddl}")
+
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS players (
@@ -257,8 +266,9 @@ class JobBoardStore:
             row = conn.execute("SELECT * FROM job_board_state WHERE user_id=?", (uid,)).fetchone()
             jobs = self._decode_jobs(str(row["jobs_json"] or "[]"))
             next_at = int(row["next_board_at"] or 0)
+            pending = str(row["pending_job_json"] or "") if "pending_job_json" in row.keys() else ""
 
-            if not jobs and now >= next_at:
+            if not jobs and not pending and now >= next_at:
                 batch_id, generated = self._generate_batch()
                 conn.execute(
                     """
@@ -272,8 +282,37 @@ class JobBoardStore:
             conn.commit()
             return self._state_from_row(row)
 
+    def pending_reward(self, user_id: int) -> dict | None:
+        uid=int(user_id); now=int(time.time())
+        with self._connect() as conn:
+            row=conn.execute("SELECT pending_job_json,reward_ready_at FROM job_board_state WHERE user_id=?",(uid,)).fetchone()
+        if not row or not str(row["pending_job_json"] or ""):
+            return None
+        try: job=BoardJob.from_dict(json.loads(str(row["pending_job_json"])))
+        except Exception: return None
+        ready_at=int(row["reward_ready_at"] or 0)
+        return {"job":job,"ready_at":ready_at,"ready":now>=ready_at,"remaining":max(0,ready_at-now)}
+
+    def claim_reward(self, user_id:int) -> tuple[bool,str,BoardJob|None]:
+        uid=int(user_id); now=int(time.time())
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row=conn.execute("SELECT pending_job_json,reward_ready_at FROM job_board_state WHERE user_id=?",(uid,)).fetchone()
+            if not row or not str(row["pending_job_json"] or ""):
+                conn.rollback(); return False,"Aucune récompense en attente.",None
+            ready_at=int(row["reward_ready_at"] or 0)
+            if now < ready_at:
+                conn.rollback(); return False,"La mission n'est pas encore terminée.",None
+            job=BoardJob.from_dict(json.loads(str(row["pending_job_json"])))
+            conn.execute("INSERT OR IGNORE INTO players(user_id) VALUES (?)",(uid,))
+            conn.execute("UPDATE players SET wallet_gold=wallet_gold+? WHERE user_id=?",(int(job.reward),uid))
+            conn.execute("UPDATE job_board_state SET pending_job_json='',reward_ready_at=0,next_board_at=0 WHERE user_id=?",(uid,))
+            conn.commit()
+        self.get_board(uid)
+        return True,"Récompense récupérée.",job
+
     def accept_job(self, user_id: int, batch_id: str, job_id: str) -> tuple[bool, str, BoardJob | None, BoardState]:
-        """Accepte une annonce, crédite son Gold et vide le panneau pendant une heure."""
+        """Accepte une annonce : la récompense devient réclamable après une heure."""
         uid = int(user_id)
         now = int(time.time())
         with self._connect() as conn:
@@ -301,19 +340,15 @@ class JobBoardStore:
                 conn.rollback()
                 return False, "Cette annonce n'est plus disponible.", None, state
 
-            conn.execute("INSERT OR IGNORE INTO players(user_id) VALUES (?)", (uid,))
-            conn.execute(
-                "UPDATE players SET wallet_gold=wallet_gold+? WHERE user_id=?",
-                (int(selected.reward), uid),
-            )
             next_at = now + REFRESH_COOLDOWN_SECONDS
             conn.execute(
                 """
                 UPDATE job_board_state
-                SET batch_id='', jobs_json='[]', generated_at=?, next_board_at=?, accepted_total=accepted_total+1
+                SET batch_id='', jobs_json='[]', generated_at=?, next_board_at=?, accepted_total=accepted_total+1,
+                    pending_job_json=?, reward_ready_at=?
                 WHERE user_id=?
                 """,
-                (now, next_at, uid),
+                (now, next_at, json.dumps(selected.to_dict(),ensure_ascii=False), next_at, uid),
             )
             conn.commit()
 

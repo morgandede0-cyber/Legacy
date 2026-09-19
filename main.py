@@ -2056,12 +2056,10 @@ class BankView(discord.ui.View):
         )
 
         async def withdraw_cb(interaction: discord.Interaction):
-            await safe_defer(interaction)
-            await show_bank_amount(interaction, "withdraw", interaction.user.id, 10)
+            await interaction.response.send_modal(BankAmountModal("withdraw", interaction.user.id))
 
         async def deposit_cb(interaction: discord.Interaction):
-            await safe_defer(interaction)
-            await show_bank_amount(interaction, "deposit", interaction.user.id, 10)
+            await interaction.response.send_modal(BankAmountModal("deposit", interaction.user.id))
 
         async def balance_cb(interaction: discord.Interaction):
             b = ECONOMY.get_balance(interaction.user.id)
@@ -2087,158 +2085,38 @@ class BankView(discord.ui.View):
         self.add_item(back)
 
 
-class BankAmountView(discord.ui.View):
-    def __init__(self, mode: str, owner_id: int, amount: int = 10):
-        super().__init__(timeout=300)
-        self.mode = mode
-        self.owner_id = int(owner_id)
-        self.amount = max(10, int(amount))
-
-        for delta, label, row in [
-            (-100, "−100", 0),
-            (-10, "−10", 0),
-            (10, "+10", 0),
-            (100, "+100", 0),
-        ]:
-            button = discord.ui.Button(
-                label=label,
-                style=discord.ButtonStyle.secondary,
-                row=row,
-            )
-
-            async def delta_cb(interaction: discord.Interaction, change=delta):
-                if not await self._owner_only(interaction):
-                    return
-                self.amount = max(10, self.amount + change)
-                await interaction.response.edit_message(
-                    content=bank_amount_content(self.mode, self.owner_id, self.amount),
-                    view=self,
-                )
-
-            button.callback = delta_cb
-            self.add_item(button)
-
-        maximum = discord.ui.Button(label="MAX", emoji="⏫", style=discord.ButtonStyle.primary, row=1)
-        validate = discord.ui.Button(label="Valider", emoji="✅", style=discord.ButtonStyle.success, row=1)
-        cancel = discord.ui.Button(label="Annuler", emoji="↩️", style=discord.ButtonStyle.danger, row=1)
-
-        async def max_cb(interaction: discord.Interaction):
-            if not await self._owner_only(interaction):
-                return
-            b = ECONOMY.get_balance(self.owner_id)
-            maximum_value = b.wallet if self.mode == "deposit" else b.bank
-            self.amount = max(10, maximum_value) if maximum_value > 0 else 10
-            await interaction.response.edit_message(
-                content=bank_amount_content(self.mode, self.owner_id, self.amount),
-                view=self,
-            )
-
-        async def validate_cb(interaction: discord.Interaction):
-            if not await self._owner_only(interaction):
-                return
-            await interaction.response.defer()
-            if self.mode == "deposit":
-                result = ECONOMY.deposit(self.owner_id, self.amount)
-            else:
-                result = ECONOMY.withdraw(self.owner_id, self.amount)
-
-            if not result.ok:
-                await interaction.followup.send(f"❌ {result.message}", ephemeral=True)
-                return
-
-            if self.mode == "deposit":
-                await announce_player_log(interaction.guild, interaction.user, f"Dépôt bancaire de {result.requested} Gold", category="Banque", details=f"Portefeuille : {result.wallet} • Banque : {result.bank}")
-                summary = (
-                    f"✅ **Dépôt effectué : {result.requested:,} Gold**\n"
-                    f"💰 Sur toi : **{result.wallet:,} Gold**\n"
-                    f"🏦 À la banque : **{result.bank:,} Gold**"
-                )
-            else:
-                await announce_player_log(interaction.guild, interaction.user, f"Retrait bancaire de {result.requested} Gold", category="Banque", details=f"Reçu : {result.received} • Frais : {result.fee} • Portefeuille : {result.wallet} • Banque : {result.bank}")
-                fee_line = "🎁 **Premier retrait du jour : aucun frais.**" if result.was_free else f"🏦 Frais de retrait : **{result.fee:,} Gold (5 %)**"
-                summary = (
-                    f"✅ **Retrait demandé : {result.requested:,} Gold**\n"
-                    f"{fee_line}\n"
-                    f"💵 Reçu : **{result.received:,} Gold**\n"
-                    f"💰 Sur toi : **{result.wallet:,} Gold**\n"
-                    f"🏦 À la banque : **{result.bank:,} Gold**"
-                )
-
-            await edit_with_asset(
-                interaction,
-                PLACES / "bank.png",
-                "banque.png",
-                BankView(),
-                summary.replace(",", " "),
-            )
-
-        async def cancel_cb(interaction: discord.Interaction):
-            if not await self._owner_only(interaction):
-                return
-            await safe_defer(interaction)
-            await edit_with_asset(
-                interaction,
-                PLACES / "bank.png",
-                "banque.png",
-                BankView(),
-                "🏦 **Banque de Altherya**\nQue veux-tu faire ?",
-            )
-
-        maximum.callback = max_cb
-        validate.callback = validate_cb
-        cancel.callback = cancel_cb
-        self.add_item(maximum)
-        self.add_item(validate)
-        self.add_item(cancel)
-
-    async def _owner_only(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.owner_id:
-            return True
-        await interaction.response.send_message(
-            "Cette interface bancaire appartient à un autre joueur.",
-            ephemeral=True,
-        )
-        return False
-
-
-def bank_amount_content(mode: str, user_id: int, amount: int) -> str:
-    b = ECONOMY.get_balance(user_id)
-    amount = max(10, int(amount))
-
-    if mode == "deposit":
-        return (
-            "💰 **Banque de Altherya — Dépôt**\n"
-            f"Sur toi : **{b.wallet:,} Gold**\n"
-            f"À la banque : **{b.bank:,} Gold**\n\n"
-            f"Montant sélectionné : **{amount:,} Gold**\n"
-            "Aucun frais de dépôt.\n\n"
-            "Utilise **−100 / −10 / +10 / +100 / MAX**, puis **✅ Valider**."
-        ).replace(",", " ")
-
-    free = b.free_withdrawal_available
-    fee = 0 if free else max(1, amount * 5 // 100)
-    received = amount - fee
-    status = "🎁 **Retrait gratuit disponible**" if free else "⚠️ **Retrait gratuit déjà utilisé : frais de 10 %**"
-    return (
-        "💸 **Banque de Altherya — Retrait**\n"
-        f"Sur toi : **{b.wallet:,} Gold**\n"
-        f"À la banque : **{b.bank:,} Gold**\n"
-        f"{status}\n\n"
-        f"Montant sélectionné : **{amount:,} Gold**\n"
-        f"Frais : **{fee:,} Gold**\n"
-        f"Tu recevras : **{received:,} Gold**\n\n"
-        "Utilise **−100 / −10 / +10 / +100 / MAX**, puis **✅ Valider**."
-    ).replace(",", " ")
+class BankAmountModal(discord.ui.Modal):
+    def __init__(self, mode:str, owner_id:int):
+        super().__init__(title="Dépôt bancaire" if mode=="deposit" else "Retrait bancaire")
+        self.mode=mode; self.owner_id=int(owner_id)
+        self.amount_input=discord.ui.TextInput(label="Montant en Gold",placeholder="Exemple : 500",min_length=1,max_length=12,required=True)
+        self.add_item(self.amount_input)
+    async def on_submit(self, interaction:discord.Interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Cette interface bancaire appartient à un autre joueur.",ephemeral=True); return
+        raw=str(self.amount_input.value).replace(" ","").replace(",","")
+        if not raw.isdigit() or int(raw)<=0:
+            await interaction.response.send_message("❌ Entre un montant entier supérieur à 0.",ephemeral=True); return
+        amount=int(raw); await safe_defer(interaction)
+        result=ECONOMY.deposit(self.owner_id,amount) if self.mode=="deposit" else ECONOMY.withdraw(self.owner_id,amount)
+        if not result.ok:
+            await interaction.followup.send(f"❌ {result.message}",ephemeral=True); return
+        if self.mode=="deposit":
+            await announce_player_log(interaction.guild,interaction.user,f"Dépôt bancaire de {result.requested} Gold",category="Banque",details=f"Portefeuille : {result.wallet} • Banque : {result.bank}")
+            summary=f"✅ **Dépôt effectué : {result.requested:,} Gold**\n💰 Sur toi : **{result.wallet:,} Gold**\n🏦 À la banque : **{result.bank:,} Gold**"
+        else:
+            await announce_player_log(interaction.guild,interaction.user,f"Retrait bancaire de {result.requested} Gold",category="Banque",details=f"Reçu : {result.received} • Frais : {result.fee} • Portefeuille : {result.wallet} • Banque : {result.bank}")
+            fee_line="🎁 **Premier retrait du jour : aucun frais.**" if result.was_free else f"🏦 Frais de retrait : **{result.fee:,} Gold**"
+            summary=f"✅ **Retrait demandé : {result.requested:,} Gold**\n{fee_line}\n💵 Reçu : **{result.received:,} Gold**\n💰 Sur toi : **{result.wallet:,} Gold**\n🏦 À la banque : **{result.bank:,} Gold**"
+        await edit_with_asset(interaction,PLACES/"bank.png","banque.png",BankView(),summary.replace(","," "))
 
 
 async def show_bank_amount(interaction: discord.Interaction, mode: str, owner_id: int, amount: int = 10):
-    await edit_with_asset(
-        interaction,
-        PLACES / "bank.png",
-        "banque.png",
-        BankAmountView(mode, owner_id, amount),
-        bank_amount_content(mode, owner_id, amount),
-    )
+    # Compatibilité interne : le nouveau design bancaire saisit directement le montant dans un Modal.
+    if not interaction.response.is_done():
+        await interaction.response.send_modal(BankAmountModal(mode, owner_id))
+    else:
+        await interaction.followup.send("Utilise le bouton Dépôt ou Retirer pour saisir directement le montant.",ephemeral=True)
 
 
 # =========================
@@ -2875,15 +2753,18 @@ def forge_carousel_embed(user_id:int,index:int=0,notice:str|None=None)->discord.
 
 
 class ForgeView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        up=discord.ui.Button(label="Améliorer équipement",emoji="🔥",style=discord.ButtonStyle.success,custom_id="legacy:forge:upgrade")
-        back=discord.ui.Button(label="Rentrer en ville",emoji="🏙️",style=discord.ButtonStyle.secondary,custom_id="legacy:forge:back")
-        async def up_cb(i):
-            await safe_defer(i)
-            await show_forge_carousel(i,0)
-        async def back_cb(i): await return_to_hub(i)
-        up.callback=up_cb; back.callback=back_cb; self.add_item(up); self.add_item(back)
+    def __init__(self, owner_id:int|None=None):
+        super().__init__(timeout=None); self.owner_id=int(owner_id) if owner_id is not None else None
+        for idx,(key,(emoji,label)) in enumerate(FORGE_EQUIPMENT.items()):
+            b=discord.ui.Button(label=f"{label} • Améliorer",emoji=emoji,style=discord.ButtonStyle.success,row=0 if idx<2 else 1,custom_id=f"legacy:forge:grid:{key}")
+            async def cb(i,k=key):
+                uid=self.owner_id or i.user.id
+                if i.user.id!=uid: await i.response.send_message("Cette forge appartient à un autre joueur.",ephemeral=True); return
+                await safe_defer(i); index=list(FORGE_EQUIPMENT.keys()).index(k)
+                await edit_v2_surface(i,path=PLACES/"forge.png",filename="forge.png",embed=forge_carousel_embed(uid,index),view=ForgeUpgradeView(uid,index),title="⚒️ FORGE D’ALTHERYA")
+            b.callback=cb; self.add_item(b)
+        back=discord.ui.Button(label="Rentrer en ville",emoji="🏙️",style=discord.ButtonStyle.secondary,row=2,custom_id="legacy:forge:back")
+        back.callback=return_to_hub; self.add_item(back)
 
 
 class ForgeUpgradeView(discord.ui.View):
@@ -2947,7 +2828,7 @@ class ForgeUpgradeView(discord.ui.View):
             if i.user.id!=self.owner_id:
                 return await i.response.send_message("Cette forge appartient à un autre joueur.",ephemeral=True)
             await safe_defer(i)
-            await edit_with_asset(i,PLACES/"forge.png","forge.png",ForgeView(),forge_home_content(self.owner_id))
+            await edit_with_asset(i,PLACES/"forge.png","forge.png",ForgeView(self.owner_id),forge_home_content(self.owner_id))
         back.callback=back_cb
         self.add_item(back)
 
@@ -2992,6 +2873,16 @@ def expedition_home_content(user_id: int, notice: str | None = None) -> str:
 
     if notice:
         lines.extend(["", notice])
+
+    pending = JOB_BOARD_STORE.pending_reward(user_id)
+    if pending:
+        job=pending["job"]; rarity=JOB_RARITIES[job.rarity]
+        lines.extend(["", f"🧾 **Mission en cours : {job.title}**", f"{rarity['emoji']} {rarity['label']} • 💰 **{job.reward} Gold**"])
+        if pending["ready"]:
+            lines.extend(["", "🟢 **Mission terminée — ta récompense t'attend sur le panneau.**"])
+        else:
+            lines.extend(["", f"🔴 **Récompense verrouillée** • disponible <t:{pending['ready_at']}:R>"])
+        return "\n".join(lines)
 
     if state.cooling_down:
         lines.extend([
@@ -3061,18 +2952,10 @@ class ExpeditionView(discord.ui.View):
                         )
                         return
 
-                    await announce_gold_activity(
-                        interaction.guild,
-                        interaction.user,
-                        accepted.reward,
-                        f"Petite annonce — {accepted.title}",
-                        details=f"Rareté : {JOB_RARITIES[accepted.rarity]['label']}",
-                        public=False,
-                    )
                     rarity = JOB_RARITIES[accepted.rarity]
                     notice = (
                         f"✅ **Petit boulot accepté : {accepted.title}**\n"
-                        f"{rarity['emoji']} {rarity['label']} • 💰 **+{accepted.reward} Gold** ajoutés à ton portefeuille."
+                        f"{rarity['emoji']} {rarity['label']} • ⏳ **1 h de mission** avant de pouvoir récupérer **{accepted.reward} Gold** sur ce panneau."
                     )
                     await edit_with_asset(
                         interaction,
@@ -3084,6 +2967,27 @@ class ExpeditionView(discord.ui.View):
 
                 button.callback = accept_cb
                 self.add_item(button)
+
+        pending = JOB_BOARD_STORE.pending_reward(self.owner_id) if self.owner_id is not None else None
+        if pending:
+            claim = discord.ui.Button(
+                label="Récupérer la récompense" if pending["ready"] else f"Récompense • {short_time(pending['remaining'])}",
+                emoji="🎁",
+                style=discord.ButtonStyle.success if pending["ready"] else discord.ButtonStyle.danger,
+                disabled=not pending["ready"],
+                row=2, custom_id="altherya:jobs:claim"
+            )
+            async def claim_cb(interaction: discord.Interaction):
+                if self.owner_id is not None and interaction.user.id != self.owner_id:
+                    await interaction.response.send_message("Ce panneau appartient à un autre joueur.",ephemeral=True); return
+                await safe_defer(interaction)
+                ok,msg,job=JOB_BOARD_STORE.claim_reward(interaction.user.id)
+                if ok and job:
+                    await announce_gold_activity(interaction.guild,interaction.user,job.reward,f"Petite annonce — {job.title}",public=False)
+                    notice=f"🎁 **Récompense récupérée : +{job.reward} Gold** pour *{job.title}*."
+                else: notice=f"⏳ **{msg}**"
+                await edit_with_asset(interaction,PLACES/"expeditions.png","expeditions.png",ExpeditionView(interaction.user.id),expedition_home_content(interaction.user.id,notice))
+            claim.callback=claim_cb; self.add_item(claim)
 
         refresh = discord.ui.Button(
             label="Actualiser",
@@ -3747,7 +3651,7 @@ class DarkAlleyView(discord.ui.View):
 
         async def guard_cb(interaction: discord.Interaction):
             await safe_defer(interaction)
-            await edit_with_asset(interaction, PLACES/"alley_guard.png", "vigile.png", GuardView(), guard_content(interaction.user.id))
+            await edit_with_asset(interaction, PLACES/"alley_guard.png", "vigile.png", GuardView(interaction.user.id), guard_content(interaction.user.id))
 
         async def panel_cb(interaction: discord.Interaction):
             await safe_defer(interaction)
@@ -3918,12 +3822,14 @@ class ThiefView(discord.ui.View):
         crime=discord.ui.Button(label="Commettre un crime",emoji="🕶️",style=discord.ButtonStyle.danger,custom_id="legacy:alley:thief:crime")
         back=discord.ui.Button(label="Retour à la ruelle",emoji="↩️",style=discord.ButtonStyle.secondary,custom_id="legacy:alley:thief:back")
         async def larceny_cb(i):
+            await safe_defer(i)
             r=DARK_STORE.petty_larceny(i.user.id)
-            if not r.get('ok'): await i.response.send_message(f"⏳ Nouveau larcin dans **{short_time(r.get('cooldown',0))}**.",ephemeral=True); return
+            if not r.get('ok'):
+                await i.followup.send(f"⏳ Nouveau larcin dans **{short_time(r.get('cooldown',0))}**.",ephemeral=True); return
             rep=DARK_STORE.criminal_reputation(i.user.id)
             if rep['tier']: await announce_achievement(i,f"criminal_reputation:{rep['tier']}")
             if r['amount']: await announce_gold_activity(i.guild,i.user,int(r['amount']),"Petit larcin",public=False)
-            await i.response.send_message(f"🪙 Petit larcin réussi : **+{r['amount']} Gold**. Réputation : **{rep['label']}**.",ephemeral=True)
+            await i.followup.send(f"🪙 Petit larcin réussi : **+{r['amount']} Gold**. Réputation : **{rep['label']}**.\n⏳ Nouveau larcin dans **30 min**.",ephemeral=True)
         async def npc_cb(i):
             if DARK_STORE.criminal_reputation(i.user.id)['label'] not in ("Petite frappe","Bandit","Criminel","Seigneur de la Ruelle"):
                 await i.response.send_message("🔒 Rang **Petite frappe** requis.",ephemeral=True); return
@@ -4062,8 +3968,18 @@ class RobberView(discord.ui.View):
 
 
 class GuardView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, owner_id: int | None = None):
         super().__init__(timeout=None)
+        self.owner_id = int(owner_id) if owner_id is not None else None
+        if self.owner_id is not None and DARK_STORE.has_clandestine_access(self.owner_id):
+            enter = discord.ui.Button(label="Rentrer",emoji="🚪",style=discord.ButtonStyle.success,custom_id="legacy:alley:guard:enter")
+            back_paid = discord.ui.Button(label="Retour à la ruelle",emoji="↩️",style=discord.ButtonStyle.secondary,custom_id="legacy:alley:guard:back_paid")
+            async def enter_cb(i):
+                if i.user.id != self.owner_id: await i.response.send_message("Ce pass appartient à un autre joueur.",ephemeral=True); return
+                await safe_defer(i); await edit_with_asset(i,PLACES/"casino_room.png","casino.png",CasinoMainView(),casino_home_content(i.user.id))
+            async def back_paid_cb(i): await show_alley_home(i)
+            enter.callback=enter_cb; back_paid.callback=back_paid_cb
+            self.add_item(enter); self.add_item(back_paid); return
         invite = discord.ui.Button(label="Utiliser une invitation", emoji="🎟️", style=discord.ButtonStyle.success,
                                    custom_id="legacy:alley:guard:invite")
         pay = discord.ui.Button(label=f"Payer {GUARD_ENTRY_FEE} Gold", emoji="💰", style=discord.ButtonStyle.primary,
@@ -4262,7 +4178,7 @@ class CasinoMainView(discord.ui.View):
         leave = discord.ui.Button(label="Quitter la salle", emoji="🚪", style=discord.ButtonStyle.secondary, custom_id="legacy:casino:leave")
         async def leave_cb(interaction: discord.Interaction):
             await safe_defer(interaction)
-            await edit_with_asset(interaction, PLACES/"alley_guard.png", "vigile.png", GuardView(), guard_content(interaction.user.id))
+            await edit_with_asset(interaction, PLACES/"alley_guard.png", "vigile.png", GuardView(interaction.user.id), guard_content(interaction.user.id))
         leave.callback = leave_cb
         self.add_item(leave)
 
@@ -4569,7 +4485,7 @@ class RussianRouletteView(discord.ui.View):
             st=RUSSIAN_STATES.get(self.session_id)
             if not st:return
             st["step"]+=1
-            await interaction.edit_original_response(content="💀 **ROULETTE RUSSE**\n\nLe barillet de jeu tourne...\n`◌ ◌ ◌ ◌ ◌ ◌`",view=discord.ui.View())
+            await edit_with_asset(interaction,PLACES/"casino_room.png","casino.png",discord.ui.View(),"💀 **ROULETTE RUSSE**\n\nLe barillet de jeu tourne...\n`◌ ◌ ◌ ◌ ◌ ◌`")
             await asyncio.sleep(0.8)
             if st["step"]==st["danger"]:
                 settled=CASINO_STORE.settle(self.session_id,0); RUSSIAN_STATES.pop(self.session_id,None)
@@ -4577,7 +4493,7 @@ class RussianRouletteView(discord.ui.View):
                 await edit_with_asset(interaction,PLACES/"casino_room.png","casino.png",CasinoResultView(self.owner_id,"russian"),
                                       f"💥 **BANG — tu perds la manche.**\nLe mafieux récupère ta mise.\n💰 Solde : **{settled.get('wallet',0)} Gold**")
                 return
-            await interaction.edit_original_response(content="😈 **CLIC — tu restes dans la partie.**\nLe hyène prend son tour...",view=discord.ui.View())
+            await edit_with_asset(interaction,PLACES/"casino_room.png","casino.png",discord.ui.View(),"😈 **CLIC — tu restes dans la partie.**\nLe hyène prend son tour...")
             await asyncio.sleep(1.0)
             if not DARK_STORE.has_clandestine_access(interaction.user.id):
                 CASINO_STORE.refund(self.session_id); RUSSIAN_STATES.pop(self.session_id,None)
@@ -4591,8 +4507,13 @@ class RussianRouletteView(discord.ui.View):
                 await edit_with_asset(interaction,PLACES/"casino_room.png","casino.png",CasinoResultView(self.owner_id,"russian"),
                                       f"💥 **Le mafieux tombe sur la mauvaise case !**\n🏆 Tu remportes **{payout} Gold**.\n💰 Solde : **{settled.get('wallet',0)} Gold**")
                 return
-            await interaction.edit_original_response(content=f"😏 **Le mafieux s'en sort.**\n\nCases déjà jouées : **{st['step']}/6**\nÀ toi de retenter.",view=self)
-        go.callback=go_cb; self.add_item(go)
+            await edit_with_asset(interaction,PLACES/"casino_room.png","casino.png",self,f"😏 **Le mafieux s'en sort.**\n\nCases déjà jouées : **{st['step']}/6**\nÀ toi de retenter.")
+        back=discord.ui.Button(label="Retour aux jeux",emoji="↩️",style=discord.ButtonStyle.secondary)
+        async def back_cb(interaction:discord.Interaction):
+            if interaction.user.id!=self.owner_id: await interaction.response.send_message("Ce n'est pas ta partie.",ephemeral=True); return
+            CASINO_STORE.refund(self.session_id); RUSSIAN_STATES.pop(self.session_id,None)
+            await safe_defer(interaction); await edit_with_asset(interaction,PLACES/"casino_room.png","casino.png",CasinoMainView(),casino_home_content(interaction.user.id))
+        go.callback=go_cb; back.callback=back_cb; self.add_item(go); self.add_item(back)
 
     async def on_timeout(self):
         CASINO_STORE.refund(self.session_id)
@@ -4810,19 +4731,73 @@ class PodiumView(CastleBackView):
         async def r(i): await safe_defer(i); await show_castle_podium(i)
         refresh.callback=r; super().__init__(refresh)
 
+def _podium_cell(text: str, width: int) -> str:
+    text = str(text)
+    if len(text) > width:
+        text = text[:max(1, width - 1)] + "…"
+    return text.center(width)
+
+def _podium_text(top3):
+    # Ordre visuel d'un vrai podium : 2e à gauche, 1er au centre, 3e à droite.
+    slots = {1: ("—", 0), 2: ("—", 0), 3: ("—", 0)}
+    for pos, name, total in top3:
+        slots[pos] = (name, int(total))
+    n1,g1=slots[1]; n2,g2=slots[2]; n3,g3=slots[3]
+    w=18
+    return "\n".join([
+        "```",
+        f"{_podium_cell(n2,w)} {_podium_cell(n1,w)} {_podium_cell(n3,w)}",
+        f"{_podium_cell('🥈 '+format(g2, ',').replace(',', ' ')+' G',w)} {_podium_cell('🥇 '+format(g1, ',').replace(',', ' ')+' G',w)} {_podium_cell('🥉 '+format(g3, ',').replace(',', ' ')+' G',w)}",
+        f"{'':{w}} {'┏━━━━━━━━━━━━━━━━┓':^{w}} {'':{w}}",
+        f"{'┏━━━━━━━━━━━━━━━━┓':^{w}} {'┃       1        ┃':^{w}} {'':{w}}",
+        f"{'┃       2        ┃':^{w}} {'┃                ┃':^{w}} {'┏━━━━━━━━━━━━━━━━┓':^{w}}",
+        f"{'┃                ┃':^{w}} {'┃                ┃':^{w}} {'┃       3        ┃':^{w}}",
+        f"{'┗━━━━━━━━━━━━━━━━┛':^{w}} {'┗━━━━━━━━━━━━━━━━┛':^{w}} {'┗━━━━━━━━━━━━━━━━┛':^{w}}",
+        "```",
+    ])
+
 async def show_castle_podium(interaction):
-    rows=CASTLE_STORE.leaderboard(10); medals=['🥇','🥈','🥉']; embeds=[]
-    if not rows:
-        embeds=[discord.Embed(title='🏆 Podium des plus riches',description='Aucun joueur classé pour le moment.')]
-    for idx,row in enumerate(rows[:3]):
-        m=await castle_member(interaction.guild,int(row['user_id'])); name=m.display_name if m else f'Joueur {row["user_id"]}'
-        e=discord.Embed(title=f'{medals[idx]} #{idx+1} — {name}',description=f'💰 **{int(row["total"]):,} Gold**'.replace(',',' '))
-        if m: e.set_thumbnail(url=m.display_avatar.url)
-        embeds.append(e)
-    if len(rows)>3:
-        rest='\n'.join(f'**#{i+1}** <@{r["user_id"]}> — **{int(r["total"]):,} Gold**'.replace(',',' ') for i,r in enumerate(rows[3:],start=3))
-        embeds.append(discord.Embed(title='Classement',description=rest))
-    await interaction.edit_original_response(content='🏆 **PODIUM DES JOUEURS LES PLUS RICHES**\nFortune = Gold en poche + Gold en banque. • 🔄 Actualisation instantanée',attachments=[],embeds=embeds,view=PodiumView())
+    rows=CASTLE_STORE.leaderboard(3)
+    top3=[]
+    avatars={}
+    if rows:
+        for idx,row in enumerate(rows, start=1):
+            m=await castle_member(interaction.guild,int(row['user_id']))
+            name=m.display_name if m else 'Joueur inconnu'
+            top3.append((idx,name,int(row['total'])))
+            if m is not None:
+                avatars[idx]=str(m.display_avatar.url)
+
+    children=[discord.ui.TextDisplay('# 🏆 HALL OF FAME — ALTHÉRYA')]
+    children.append(discord.ui.TextDisplay('*Les trois plus grandes fortunes du Royaume de IV*'))
+
+    # Les trois vraies photos de profil Discord, dans l'ordre visuel du podium : 2 • 1 • 3.
+    if avatars:
+        gallery=discord.ui.MediaGallery()
+        for pos in (2,1,3):
+            if pos in avatars:
+                gallery.add_item(media=avatars[pos],description=f'#{pos} du classement Altherya')
+        children.append(gallery)
+
+    children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
+    if top3:
+        children.append(discord.ui.TextDisplay(_podium_text(top3)))
+        children.append(discord.ui.TextDisplay('*Fortune = Gold en poche + Gold en banque.*'))
+    else:
+        children.append(discord.ui.TextDisplay('*Aucun joueur classé pour le moment.*'))
+
+    children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
+    legacy=PodiumView()
+    buttons=[item for item in legacy.children if isinstance(item,discord.ui.Button)]
+    for button in buttons:
+        children.append(discord.ui.Section(
+            f"### {str(button.emoji or '◆')} {button.label}\n{_v2_action_description(button)}",
+            accessory=button
+        ))
+    view=discord.ui.LayoutView(timeout=None)
+    view.add_item(discord.ui.Container(*children,accent_colour=0xD6A84B))
+    await interaction.edit_original_response(content=None,attachments=[],embeds=[],view=view)
+
 
 async def show_player_profile(interaction):
     uid=interaction.user.id
@@ -4942,7 +4917,7 @@ async def show_castle_daily(interaction,notice=''):
     available=CASTLE_STORE.daily_available(interaction.user.id)
     txt=f'🎁 **RÉCOMPENSE JOURNALIÈRE**\n\nRécompense du jour : **{DAILY_REWARD} Gold + {DAILY_XP} XP**\nDisponible **une fois par jour**, remise à zéro à 00h00 heure du serveur.\n\n'+('🟢 **Disponible maintenant.**' if available else '🔒 **Déjà récupérée aujourd’hui.**')
     if notice: txt+='\n\n'+notice
-    await interaction.edit_original_response(content=txt,attachments=[],embeds=[],view=DailyView(available))
+    await edit_v2_surface(interaction,path=PLACES/'castle.png',filename='castle.png',content=txt,view=DailyView(available),title='🎁 RÉCOMPENSE JOURNALIÈRE')
 
 class PlaceView(discord.ui.View):
     def __init__(self, place_key: str):
