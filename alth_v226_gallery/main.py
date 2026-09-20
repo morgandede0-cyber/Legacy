@@ -330,7 +330,7 @@ class WorldHubView(discord.ui.View):
             if self.private_session:
                 await interaction.response.edit_message(
                     content="🏙️ **Altherya**\nBienvenue dans la cité. Choisis ta destination.",
-                    attachments=[file], embeds=[], view=HubView(private_session=True)
+                    attachments=[file], view=HubView(private_session=True)
                 )
             else:
                 await interaction.response.send_message(
@@ -343,7 +343,7 @@ class WorldHubView(discord.ui.View):
             if level < 3:
                 text = f"🔒 **La Forge de KHAZ'GORAM** se débloque au **niveau 3**.\nTon niveau actuel : **{level}**."
                 if self.private_session:
-                    await interaction.response.edit_message(content=text, attachments=[], embeds=[], view=WorldHubView(private_session=True))
+                    await interaction.response.edit_message(content=text, attachments=[], view=WorldHubView(private_session=True))
                 else:
                     await interaction.response.send_message(text, ephemeral=True)
                 return
@@ -448,7 +448,7 @@ class WorldHubV2(discord.ui.LayoutView):
                     file = discord.File(PLACES / "hub.png", filename="altherya_city.png")
                     view = CityHubV2(private_session=True)
                     if self.private_session:
-                        await interaction.response.edit_message(content=None, embeds=[], attachments=[file], view=view)
+                        await interaction.response.edit_message(content=None, attachments=[file], view=view)
                     else:
                         await interaction.response.send_message(file=file, view=view, ephemeral=True)
                     return
@@ -512,7 +512,7 @@ class CityHubV2(discord.ui.LayoutView):
         board = discord.ui.Button(label="Panneau central", emoji="📋", style=discord.ButtonStyle.primary, custom_id="altherya:v210:city:board")
         async def world_cb(interaction: discord.Interaction):
             file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
-            await interaction.response.edit_message(content=None, embeds=[], attachments=[file], view=WorldHubV2(private_session=True))
+            await interaction.response.edit_message(content=None, attachments=[file], view=WorldHubV2(private_session=True))
         async def board_cb(interaction: discord.Interaction):
             p = CASTLE_STORE.profile(interaction.user.id)
             lvl, cur, need = level_from_xp(p['xp'])
@@ -1152,7 +1152,7 @@ class TavernFriendChallengeView(discord.ui.View):
             await interaction.message.edit(
                 content=(f"🪙 **PILE OU FACE — DUEL AMICAL**\n{challenger.mention}, choisis **Pile** ou **Face**. "
                          f"{opponent.mention} recevra automatiquement l'autre côté.\n💰 Pot : **{self.wager*2} Gold**"),
-                attachments=[], embeds=[],
+                attachments=[], 
                 view=CoinPVPChoiceView(self.session_id, self.challenger_id, self.opponent_id, self.wager)
             )
         else:
@@ -1160,7 +1160,7 @@ class TavernFriendChallengeView(discord.ui.View):
                 content=(f"✊ **PIERRE • FEUILLE • CISEAUX — DUEL AMICAL**\n"
                          f"{challenger.mention} et {opponent.mention}, choisissez chacun votre coup. "
                          f"Les choix restent secrets jusqu'à la révélation.\n💰 Pot : **{self.wager*2} Gold**"),
-                attachments=[], embeds=[],
+                attachments=[], 
                 view=RPSPVPChoiceView(self.session_id, self.challenger_id, self.opponent_id, self.wager)
             )
 
@@ -1171,7 +1171,7 @@ class TavernFriendChallengeView(discord.ui.View):
             return
         self.completed = True
         TAVERN_STORE.pvp_refund(self.session_id)
-        await interaction.response.edit_message(content="❌ **Défi annulé.** La mise réservée a été remboursée.", attachments=[], embeds=[], view=None)
+        await interaction.response.edit_message(content="❌ **Défi annulé.** La mise réservée a été remboursée.", attachments=[], view=None)
 
     async def on_timeout(self):
         if self.completed:
@@ -1180,7 +1180,7 @@ class TavernFriendChallengeView(discord.ui.View):
         TAVERN_STORE.pvp_refund(self.session_id)
         if self.message:
             try:
-                await self.message.edit(content="⌛ **Défi expiré.** La mise réservée a été remboursée.", attachments=[], embeds=[], view=None)
+                await self.message.edit(content="⌛ **Défi expiré.** La mise réservée a été remboursée.", attachments=[], view=None)
             except Exception:
                 pass
 
@@ -1193,7 +1193,7 @@ def _member_label(member, fallback: str) -> str:
 
 async def _edit_public_game(message: discord.Message, path: Path, filename: str, content: str, view=None):
     file = discord.File(path, filename=filename)
-    await message.edit(content=content, attachments=[], files=[file], embeds=[], view=view)
+    await message.edit(content=content, attachments=[], files=[file], view=view)
 
 
 async def settle_tavern_pvp(guild: discord.Guild, session_id: str, winner_id: int | None, game_label: str):
@@ -2550,9 +2550,9 @@ async def _edit_arena_surface(surface, *, content: str, view: discord.ui.View):
     ``discord.Message.edit`` retourne alors 404 / Unknown Message (10008).
     """
     if isinstance(surface, discord.Interaction):
-        await surface.edit_original_response(content=content, attachments=[], embeds=[], view=view)
+        await surface.edit_original_response(content=content, attachments=[], view=view)
         return
-    await surface.edit(content=content, attachments=[], embeds=[], view=view)
+    await surface.edit(content=content, attachments=[], view=view)
 
 
 async def run_bot_turn(state: BattleState, surface):
@@ -2634,7 +2634,7 @@ async def finish_battle_interaction(interaction: discord.Interaction, state: Bat
     await interaction.edit_original_response(
         content=_arena_result_text(winner, payout),
         attachments=[],
-        embeds=[],
+        
         view=ArenaView(),
     )
 
@@ -3552,7 +3552,7 @@ def start_expedition_monitor(run_id: str):
 async def open_exploration_location(interaction: discord.Interaction, location_key: str, *, edit: bool = False):
     if location_key not in LOCATION_META:
         if edit:
-            await interaction.response.edit_message(content="Zone inconnue.", attachments=[], embeds=[], view=WorldHubView())
+            await interaction.response.edit_message(content="Zone inconnue.", attachments=[], view=WorldHubView())
         else:
             await interaction.response.send_message("Zone inconnue.", ephemeral=True)
         return
@@ -3563,7 +3563,7 @@ async def open_exploration_location(interaction: discord.Interaction, location_k
     content = location_home_content(interaction.user.id, location_key)
     view = ExplorationLocationView(interaction.user.id, location_key)
     if edit:
-        await interaction.response.edit_message(content=content, attachments=[file], embeds=[], view=view)
+        await interaction.response.edit_message(content=content, attachments=[file], view=view)
     else:
         # Première ouverture : une seule fenêtre privée est créée. Ensuite toute la navigation l'édite.
         await interaction.response.send_message(content=content, file=file, view=view, ephemeral=True)
@@ -4828,7 +4828,7 @@ async def show_castle_podium(interaction):
         ))
     view=discord.ui.LayoutView(timeout=None)
     view.add_item(discord.ui.Container(*children,accent_colour=0xD6A84B))
-    await interaction.edit_original_response(content=None,attachments=[],embeds=[],view=view)
+    await interaction.edit_original_response(content=None,attachments=[],view=view)
 
 
 async def show_player_profile(interaction):
@@ -4887,7 +4887,7 @@ async def show_central_board(interaction):
         '📋 **Quêtes quotidiennes** — Consulte tes 6 objectifs reliés à Ashkar, la Forge, l’Arène, la Taverne et aux activités du monde.\n'
         '📜 **Fiche joueur** — Consulte ta progression complète, tes réputations, ta fortune et tes statistiques.'
     )
-    await interaction.edit_original_response(content=txt,attachments=[],embeds=[],view=CentralBoardView())
+    await interaction.edit_original_response(content=txt,attachments=[],view=CentralBoardView())
 
 class QuestView(discord.ui.View):
     def __init__(self,ready=False,claimed=False):
@@ -4931,7 +4931,7 @@ async def show_castle_quests(interaction,notice=''):
         + status
     )
     if notice: txt+='\n\n'+notice
-    await interaction.edit_original_response(content=txt,attachments=[],embeds=[],view=QuestView(ready,claimed))
+    await interaction.edit_original_response(content=txt,attachments=[],view=QuestView(ready,claimed))
 
 class DailyView(CastleBackView):
     def __init__(self,available=True):
@@ -5275,7 +5275,7 @@ async def _send_personal_place(interaction: discord.Interaction, destination: st
     v2view = _legacy_view_to_v2(view, content=content, filename="lieu.png", title=f"{data['emoji']} {data['label'].upper()} — ALTHÉRYA")
     if edit:
         await safe_defer(interaction)
-        await interaction.edit_original_response(content=None, attachments=[file], embeds=[], view=v2view)
+        await interaction.edit_original_response(content=None, attachments=[file], view=v2view)
     else:
         await interaction.response.send_message(file=file, view=v2view, ephemeral=True)
 
@@ -5291,12 +5291,12 @@ async def return_to_hub(interaction: discord.Interaction):
         if not interaction.response.is_done():
             await interaction.response.edit_message(
                 content=None,
-                attachments=[file], embeds=[], view=HubView(private_session=True),
+                attachments=[file], view=HubView(private_session=True),
             )
         else:
             await interaction.edit_original_response(
                 content=None,
-                attachments=[file], embeds=[], view=HubView(private_session=True),
+                attachments=[file], view=HubView(private_session=True),
             )
     except (discord.NotFound, discord.HTTPException):
         pass
@@ -5337,7 +5337,7 @@ async def ensure_fixed_hub():
         message = await channel.fetch_message(int(message_id))
         file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
         await message.edit(
-            content=None, embeds=[], attachments=[file], view=WorldHubView(),
+            content=None, attachments=[file], view=WorldHubView(),
         )
     except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
         # Le Hub a probablement été supprimé ou le salon n'est plus accessible.

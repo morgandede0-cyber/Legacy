@@ -46,7 +46,7 @@ def _v2_view(title: str, description: str, legacy_view: discord.ui.View | None =
 
 async def _edit_v2(interaction, *, title, description, legacy_view=None, file=None, filename=None, accent=0x6D4B37):
     view=_v2_view(title, description, legacy_view, image=filename if file else None, accent=accent)
-    await interaction.response.edit_message(content=None, embeds=[], attachments=[file] if file else [], view=view)
+    await interaction.response.edit_message(content=None, attachments=[file] if file else [], view=view)
 
 async def _send_v2(interaction, *, title, description, legacy_view=None, file=None, filename=None, ephemeral=True, accent=0x6D4B37):
     view=_v2_view(title, description, legacy_view, image=filename if file else None, accent=accent)
