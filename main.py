@@ -71,13 +71,24 @@ def _dice_face(value: int) -> str:
     return _DICE_FACE.get(int(value), str(value))
 
 def _mobile_game_box(title: str, body: str, *, wager: int | None = None, wallet: int | None = None) -> str:
-    lines = [f"## {title}"]
+    # HUD texte natif Discord : aucun PNG/GIF, donc rendu immédiat sur mobile.
+    meta = []
     if wager is not None:
-        lines.append(f"💰 **Mise : {int(wager):,} Gold**")
-    lines.append(body.strip())
+        meta.append(f"🎟️ **{int(wager):,} G**")
     if wallet is not None:
-        lines.append(f"💰 **Solde : {int(wallet):,} Gold**")
-    return "\n\n".join(lines)
+        meta.append(f"🪙 **{int(wallet):,} G**")
+    head = f"## {title}"
+    if meta:
+        head += "\n" + "  •  ".join(meta)
+    return f"{head}\n\n{body.strip()}"
+
+def _mobile_meter(value: int, maximum: int, width: int = 10) -> str:
+    maximum = max(1, int(maximum)); value = max(0, min(int(value), maximum))
+    fill = round(width * value / maximum)
+    return "█" * fill + "░" * (width - fill)
+
+def _mobile_card_table(cards: list[dict]) -> str:
+    return "  ".join(f"〔{c['rank']}{ {'S':'♠','H':'♥','D':'♦','C':'♣'}[c['suit']] }〕" for c in cards)
 if shared_economy_enabled():
     _eco_diag = shared_economy_diagnostics()
     print(f"[ECONOMIE COMMUNE] PostgreSQL actif • migration initiale: {MIGRATED_GOLD_PLAYERS} joueur(s) • récupération historique: {'oui' if RECOVERED_LEGACY_WALLET else 'non'} • db={_eco_diag['database']} • host={_eco_diag['host']}:{_eco_diag['port']} • wallets={_eco_diag['wallets']} • empreinte={_eco_diag['fingerprint']}")
@@ -1658,6 +1669,10 @@ class CoinChoiceView(discord.ui.View):
 
 
 async def show_coin_choice(interaction: discord.Interaction, session_id: str, wager: int):
+    if _is_mobile(interaction.user.id):
+        body = "```\n       ◯\n    PILE / FACE\n       ◯\n```\n**Choisis ton côté :**"
+        await edit_v2_surface(interaction, content=_mobile_game_box("🪙 PILE OU FACE", body, wager=wager), view=CoinChoiceView(interaction.user.id, session_id, wager), title="🪙 JEU")
+        return
     path = tavern_render_path(session_id, "coin")
     render_coin(path, wager, "?", None, "Choisis Pile ou Face.")
     await edit_with_asset(interaction, path, "pile_face.png", CoinChoiceView(interaction.user.id, session_id, wager),
@@ -1718,6 +1733,10 @@ class RPSChoiceView(discord.ui.View):
 
 
 async def show_rps_choice(interaction: discord.Interaction, session_id: str, wager: int):
+    if _is_mobile(interaction.user.id):
+        body = "### ✊   VS   ❔\n`PIERRE   FEUILLE   CISEAUX`\n\n**Choisis ton coup :**"
+        await edit_v2_surface(interaction, content=_mobile_game_box("⚔️ DUEL PFC", body, wager=wager), view=RPSChoiceView(interaction.user.id, session_id, wager), title="✊ JEU")
+        return
     path = tavern_render_path(session_id, "rps")
     render_rps(path, wager, "pierre", None, "Choisis ton coup.")
     await edit_with_asset(interaction, path, "pfc.png", RPSChoiceView(interaction.user.id, session_id, wager),
@@ -4429,9 +4448,18 @@ async def show_blackjack(interaction: discord.Interaction, session_id: str, *, r
         )
     dealer_line = bj_cards_text(st["dealer"]) if reveal else f"{bj_cards_text(st['dealer'][:1])}  🂠"
     if _is_mobile(interaction.user.id):
-        text = (f"## 🃏 BLACK JACK\n💰 **Mise : {st['wager']} Gold**\n\n"
-                f"### 🎩 CROUPIER\n`{dealer_line}`" + (f"  **{bj_total(st['dealer'])}**" if reveal else "") +
-                f"\n\n### 👤 TOI — **{bj_total(st['player'])}**\n`{bj_cards_text(st['player'])}`")
+        dealer_cards = _mobile_card_table(st["dealer"]) if reveal else (_mobile_card_table(st["dealer"][:1]) + "  〔🂠〕")
+        dealer_score = str(bj_total(st["dealer"])) if reveal else "?"
+        pscore = bj_total(st["player"])
+        danger = " 🔥" if pscore >= 18 else ""
+        text = _mobile_game_box(
+            "🃏 BLACKJACK",
+            f"**🎩 CROUPIER**                         `{dealer_score}/21`\n{dealer_cards}\n\n"
+            f"──────────  VS  ──────────\n\n"
+            f"**👤 TOI**                              `{pscore}/21`{danger}\n{_mobile_card_table(st['player'])}\n"
+            f"`{_mobile_meter(pscore, 21, 14)}`",
+            wager=st["wager"],
+        )
     else:
         text = (
             f"🃏 **BLACK JACK — mise {st['wager']} Gold**\n"
@@ -4618,6 +4646,12 @@ async def play_roulette(interaction: discord.Interaction, session_id: str, wager
         await edit_with_asset(interaction, path, "roulette.png", discord.ui.View(), f"🎡 **ROULETTE — {label}**\nLa roue tourne... les numéros défilent.")
         await asyncio.sleep(0.22 + frame_no * 0.055)
 
+    # Mobile : petite sensation de roue en texte, sans fichier ni rendu graphique.
+    if _is_mobile(interaction.user.id):
+        fake_a = EUROPEAN_WHEEL[(target_index - 2) % len(EUROPEAN_WHEEL)]
+        fake_b = EUROPEAN_WHEEL[(target_index - 1) % len(EUROPEAN_WHEEL)]
+        await edit_v2_surface(interaction, content=_mobile_game_box("🎡 ROULETTE", f"Pari : **{label}**\n\n`  {fake_a:>2}   ◉   {fake_b:<2}  `\n\n*La bille ralentit…*", wager=wager), view=discord.ui.View(), title="🎡 CASINO")
+        await asyncio.sleep(0.38)
     # verrouillage exact sur le résultat tiré. Mobile : aucun PNG généré.
     if not _is_mobile(interaction.user.id):
         render_roulette_strip(path, target_index, label, wager, final=True)
@@ -4651,8 +4685,12 @@ RUSSIAN_STATES: dict[str,dict]={}
 
 async def start_russian_roulette(interaction: discord.Interaction, session_id: str, wager: int):
     RUSSIAN_STATES[session_id]={"owner":interaction.user.id,"wager":wager,"danger":random.randint(1,6),"step":0,"turn":"player"}
-    await edit_with_asset(interaction, PLACES/"casino_room.png","casino.png",RussianRouletteView(interaction.user.id,session_id),
-                          f"💀 **ROULETTE RUSSE — version fictive de Altherya**\nMise : **{wager} Gold**\n\nFace à toi, un hyène mafieux sourit. Le tour est représenté par un barillet de jeu à **6 cases**.\nÀ toi de tenter ta chance.")
+    if _is_mobile(interaction.user.id):
+        body = "**😈 MAFIEUX**  `◉ ◉ ◉ ◉ ◉ ◉`\n\n──────────  VS  ──────────\n\n**👤 TOI**     À toi de jouer.\n\n*Une seule mauvaise case parmi les six…*"
+        await edit_v2_surface(interaction, content=_mobile_game_box("💀 BARILLET DU HASARD", body, wager=wager), view=RussianRouletteView(interaction.user.id,session_id), title="💀 CASINO")
+    else:
+        await edit_with_asset(interaction, PLACES/"casino_room.png","casino.png",RussianRouletteView(interaction.user.id,session_id),
+                              f"💀 **ROULETTE RUSSE — version fictive de Altherya**\nMise : **{wager} Gold**\n\nFace à toi, un hyène mafieux sourit. Le tour est représenté par un barillet de jeu à **6 cases**.\nÀ toi de tenter ta chance.")
 
 class RussianRouletteView(discord.ui.View):
     def __init__(self,owner_id:int,session_id:str):
@@ -4720,6 +4758,11 @@ async def play_slots(interaction: discord.Interaction, session_id: str, wager: i
         await edit_with_asset(interaction, path, "slots.png", discord.ui.View(), "🎰 **MACHINE À SOUS — les rouleaux tournent...**")
         await asyncio.sleep(delay)
 
+    if _is_mobile(interaction.user.id):
+        for frame in range(2):
+            fake = random.choices(SLOT_SYMBOLS, k=3)
+            await edit_v2_surface(interaction, content=_mobile_game_box("🎰 MACHINE À SOUS", f"```\n╔═══╦═══╦═══╗\n║ {fake[0]} ║ {fake[1]} ║ {fake[2]} ║\n╚═══╩═══╩═══╝\n```\n*Les rouleaux tournent…*", wager=wager), view=discord.ui.View(), title="🎰 CASINO")
+            await asyncio.sleep(0.24 + frame * 0.08)
     reels = draw_slot(); mult = slot_multiplier(reels); payout = wager * mult
     settled = CASINO_STORE.settle(session_id, payout)
     payout = int(settled.get("payout", payout))

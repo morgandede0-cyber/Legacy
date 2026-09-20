@@ -532,7 +532,23 @@ class TowerBattleView(discord.ui.View):
             path = await render_battle(self.state, self.avatar_bytes)
             file = discord.File(path, filename="ashkar_battle.png")
         e = FLOORS[self.state.floor]
-        desc = f"{class_line(self.state.class_key)}\n**{e['name']}** • Étage **{self.state.floor}/10**"
+        if DISPLAY_MODE.is_mobile(interaction.user.id):
+            def meter(v, m, width=12):
+                m=max(1,int(m)); v=max(0,min(int(v),m)); n=round(width*v/m)
+                return "█"*n + "░"*(width-n)
+            ult = "🔥 PRÊT" if self.state.ultimate_cd <= 0 else f"⏳ {self.state.ultimate_cd} tour(s)"
+            desc = (
+                f"**👹 {e['name']}**   `ÉTAGE {self.state.floor}/10`\n"
+                f"❤️ `{meter(self.state.enemy_hp, self.state.enemy_max_hp)}` **{self.state.enemy_hp}/{self.state.enemy_max_hp}**\n\n"
+                f"────────── ⚔️ ──────────\n\n"
+                f"**🧙 {self.state.player_name}** • {class_line(self.state.class_key)}\n"
+                f"❤️ `{meter(self.state.player_hp, self.state.player_max_hp)}` **{self.state.player_hp}/{self.state.player_max_hp}**\n"
+                f"{ult}"
+            )
+            if self.state.log:
+                desc += f"\n\n> {self.state.log}"
+        else:
+            desc = f"{class_line(self.state.class_key)}\n**{e['name']}** • Étage **{self.state.floor}/10**"
         if extra:
             desc += "\n" + extra
         await _edit_v2(interaction, title="⚔️ Combat — Tour d'Ashkar", description=desc, legacy_view=self, file=file, filename="ashkar_battle.png", accent=0x8B1E1E if self.state.floor == 10 else 0x6D4B37)
