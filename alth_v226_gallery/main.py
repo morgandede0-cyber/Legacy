@@ -587,9 +587,10 @@ class TroubadourView(discord.ui.View):
 
         async def story_cb(interaction: discord.Interaction):
             await safe_defer(interaction)
-            # Reprend automatiquement au dernier chapitre réellement lu.
-            chapter = STORY_STORE.last_read_chapter(interaction.user.id, 1)
-            await show_story_page(interaction, chapter)
+            # Le Troubadour ouvre toujours la Saison 1 sur le Chapitre 1.
+            # Cela garantit que le premier chapitre reste toujours accessible ;
+            # le joueur navigue ensuite avec précédent/suivant.
+            await show_story_page(interaction, 1)
 
         async def back_cb(interaction: discord.Interaction):
             await safe_defer(interaction)
@@ -671,11 +672,14 @@ async def show_story_page(interaction: discord.Interaction, chapter: int, notice
 
     embed.set_footer(text=f"Saison 1 • Chapitre {chapter} sur {SEASON_1_CHAPTERS}")
 
-    await interaction.edit_original_response(
-        content=None,
-        attachments=[],
-        embeds=[embed],
+    # Components V2 : ne jamais tenter de réinjecter un Embed classique dans
+    # le message V2 du Troubadour. On convertit la page et ses vrais boutons
+    # vers le renderer commun, comme le reste d'Altherya.
+    await edit_v2_surface(
+        interaction,
+        embed=embed,
         view=StoryCarouselView(interaction.user.id, chapter),
+        title="📖 CHRONIQUES DU TROUBADOUR",
     )
 
 
