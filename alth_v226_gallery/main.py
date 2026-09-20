@@ -4797,11 +4797,12 @@ async def show_castle_podium(interaction):
     children=[discord.ui.TextDisplay('# 🏆 HALL OF FAME — ALTHÉRYA')]
     children.append(discord.ui.TextDisplay('*Les trois plus grandes fortunes du Royaume de IV*'))
 
-    # MediaGallery Discord agrandit le premier média : on place donc le #1 en premier,
-    # puis #2 et #3 dans les deux petites cases à droite.
+    # Avec 3 médias, Discord affiche le 2e élément en grand à gauche,
+    # le 1er en petit en haut à droite et le 3e en petit en bas à droite.
+    # Ordre voulu à l'écran : grand #1, petit haut #2, petit bas #3.
     if avatars:
         gallery=discord.ui.MediaGallery()
-        for pos in (1,2,3):
+        for pos in (2,1,3):
             if pos in avatars:
                 gallery.add_item(media=avatars[pos],description=f'#{pos} du classement Altherya')
         children.append(gallery)

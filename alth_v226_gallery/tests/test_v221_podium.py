@@ -18,5 +18,5 @@ def test_podium_uses_top_three_discord_names_and_avatars():
     assert "CASTLE_STORE.leaderboard(3)" in block
     assert "m.display_name" in block
     assert "m.display_avatar.url" in block
-    assert "for pos in (1,2,3)" in block
+    assert "for pos in (2,1,3)" in block
     assert "_podium_text(top3)" in block
