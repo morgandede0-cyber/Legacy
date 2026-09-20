@@ -45,6 +45,7 @@ import legacy_world_forge as WORLD_FORGE
 import tower_engine as TOWER
 from world_engine import current_event, destination_name, destination_description
 from ui_v2 import container as v2_container, header as v2_header, separator as v2_separator, media_gallery as v2_media_gallery, action_row as v2_action_row
+import display_mode as DISPLAY_MODE
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 GUILD_ID = os.getenv("GUILD_ID", "").strip()
 PLACES = BASE / "assets" / "places"
@@ -52,6 +53,16 @@ TRANSITIONS = BASE / "assets" / "transitions"
 EXPEDITION_LIVE_ASSETS = DATA / "expedition_live"
 EXPEDITION_LIVE_ASSETS.mkdir(parents=True, exist_ok=True)
 HUB_STATE_FILE = DATA / "hub_message.json"
+DISPLAY_MODE_FILE = DATA / "display_modes.json"
+
+def _display_mode(user_id: int) -> str:
+    return DISPLAY_MODE.get(user_id)
+
+def _is_mobile(user_id: int) -> bool:
+    return DISPLAY_MODE.is_mobile(user_id)
+
+def _set_display_mode(user_id: int, mode: str):
+    return DISPLAY_MODE.set_mode(user_id, mode)
 if shared_economy_enabled():
     _eco_diag = shared_economy_diagnostics()
     print(f"[ECONOMIE COMMUNE] PostgreSQL actif • migration initiale: {MIGRATED_GOLD_PLAYERS} joueur(s) • récupération historique: {'oui' if RECOVERED_LEGACY_WALLET else 'non'} • db={_eco_diag['database']} • host={_eco_diag['host']}:{_eco_diag['port']} • wallets={_eco_diag['wallets']} • empreinte={_eco_diag['fingerprint']}")
@@ -528,6 +539,91 @@ class CityHubV2(discord.ui.LayoutView):
         panel.add_item(v2_action_row(board, world))
         self.add_item(panel)
 
+
+# ============================================================
+# V2.32 — DOUBLE INTERFACE PC / MOBILE
+# Le mode mobile conserve toutes les mécaniques mais retire les médias lourds.
+# ============================================================
+class MobileWorldView(discord.ui.LayoutView):
+    def __init__(self):
+        super().__init__(timeout=1800)
+        panel=v2_container(
+            v2_header("📱 ELYNDOR — MODE MOBILE", "Navigation légère • mêmes données • mêmes fonctions"),
+            v2_separator(True), colour=0xB67A2A,
+        )
+        specs=[
+            ("city","👑 Altherya",discord.ButtonStyle.primary),
+            ("elarwyn","🌲 Forêt d'Elarwyn",discord.ButtonStyle.success),
+            ("vorak","🏔️ Mont Vorak",discord.ButtonStyle.secondary),
+            ("khaz","⚒️ KHAZ'GORAM",discord.ButtonStyle.secondary),
+            ("ashkar","🗼 Tour d'Ashkar",discord.ButtonStyle.danger),
+        ]
+        for key,label,style in specs:
+            b=discord.ui.Button(label=label,style=style,custom_id=f"altherya:mobile:world:{key}")
+            async def cb(i,destination=key):
+                _set_display_mode(i.user.id,"mobile")
+                if destination=="city":
+                    await i.response.edit_message(view=MobileCityView(),attachments=[])
+                    return
+                if destination=="khaz":
+                    level=CASTLE_STORE.current_level(i.user.id)
+                    if level < 3:
+                        await i.response.send_message(f"🔒 KHAZ'GORAM se débloque au niveau **3**. Ton niveau : **{level}**.",ephemeral=True); return
+                    # Les mécaniques de KHAZ'GORAM restent inchangées; seul l'écran d'entrée est allégé.
+                    await i.response.send_message("⚒️ **KHAZ'GORAM**",view=WORLD_FORGE.KhazGoramView(),ephemeral=True); return
+                if destination=="ashkar":
+                    await TOWER.show_lobby(i,edit=False); return
+                await open_exploration_location(i,destination,edit=False)
+            b.callback=cb
+            panel.add_item(discord.ui.ActionRow(b))
+        switch=discord.ui.Button(label="Passer en mode PC",emoji="🖥️",style=discord.ButtonStyle.secondary,custom_id="altherya:mobile:switch_pc")
+        async def switch_cb(i):
+            _set_display_mode(i.user.id,"pc")
+            file=discord.File(WORLD_FORGE.WORLD_MAP,filename="elyndor_map.png")
+            await i.response.edit_message(attachments=[file],view=WorldHubV2(private_session=True))
+        switch.callback=switch_cb
+        panel.add_item(v2_separator())
+        panel.add_item(discord.ui.ActionRow(switch))
+        self.add_item(panel)
+
+class MobileCityView(discord.ui.LayoutView):
+    def __init__(self):
+        super().__init__(timeout=1800)
+        panel=v2_container(v2_header("📱 ALTHERYA", "Mode mobile • interface allégée"),v2_separator(True),colour=0xB67A2A)
+        for key,data in DESTINATIONS.items():
+            b=discord.ui.Button(label=data["label"],emoji=data["emoji"],style=discord.ButtonStyle.secondary,custom_id=f"altherya:mobile:city:{key}")
+            async def cb(i,destination=key):
+                _set_display_mode(i.user.id,"mobile")
+                await travel(i,destination,edit=True)
+            b.callback=cb
+            panel.add_item(discord.ui.ActionRow(b))
+        world=discord.ui.Button(label="Monde d'Elyndor",emoji="🌍",style=discord.ButtonStyle.primary,custom_id="altherya:mobile:city:world")
+        async def world_cb(i): await i.response.edit_message(attachments=[],view=MobileWorldView())
+        world.callback=world_cb
+        panel.add_item(v2_separator()); panel.add_item(discord.ui.ActionRow(world))
+        self.add_item(panel)
+
+class DisplayModeSelectView(discord.ui.LayoutView):
+    """Premier écran public : le joueur choisit son rendu avant de charger Altherya."""
+    def __init__(self):
+        super().__init__(timeout=None)
+        pc=discord.ui.Button(label="Mode PC",emoji="🖥️",style=discord.ButtonStyle.primary,custom_id="altherya:display:pc")
+        mobile=discord.ui.Button(label="Mode Mobile",emoji="📱",style=discord.ButtonStyle.success,custom_id="altherya:display:mobile")
+        async def pc_cb(i):
+            _set_display_mode(i.user.id,"pc")
+            file=discord.File(WORLD_FORGE.WORLD_MAP,filename="elyndor_map.png")
+            await i.response.send_message(file=file,view=WorldHubV2(private_session=True),ephemeral=True)
+        async def mobile_cb(i):
+            _set_display_mode(i.user.id,"mobile")
+            await i.response.send_message(view=MobileWorldView(),ephemeral=True)
+        pc.callback=pc_cb; mobile.callback=mobile_cb
+        panel=v2_container(
+            v2_header("👑 ALTHERYA — ROYAUME DE IV", "Choisis l'interface adaptée à ton appareil."),
+            v2_separator(True),
+            discord.ui.TextDisplay("🖥️ **PC** — interface immersive complète\n📱 **Mobile** — mêmes fonctions, sans médias lourds"),
+            v2_action_row(pc,mobile), colour=0xB67A2A,
+        )
+        self.add_item(panel)
 
 # Interfaces actives à partir de V2.10.
 WorldHubView = WorldHubV2
@@ -4254,10 +4350,12 @@ def blackjack_render_path(session_id: str) -> Path:
 
 async def show_blackjack(interaction: discord.Interaction, session_id: str, *, reveal: bool = False, status: str = "", view: discord.ui.View | None = None):
     st = BLACKJACK_STATES[session_id]
-    path = render_blackjack(
-        blackjack_render_path(session_id), st["player"], st["dealer"], st["wager"],
-        reveal_dealer=reveal, status=status,
-    )
+    path = blackjack_render_path(session_id)
+    if not _is_mobile(interaction.user.id):
+        render_blackjack(
+            path, st["player"], st["dealer"], st["wager"],
+            reveal_dealer=reveal, status=status,
+        )
     dealer_line = bj_cards_text(st["dealer"]) if reveal else f"{bj_cards_text(st['dealer'][:1])}  🂠"
     text = (
         f"🃏 **BLACK JACK — mise {st['wager']} Gold**\n"
@@ -4434,7 +4532,7 @@ async def play_roulette(interaction: discord.Interaction, session_id: str, wager
     label = roulette_bet_label(bet_type, number_choice)
     path = DATA / "renders" / f"roulette_{session_id}.png"
 
-    for frame_no, step in enumerate(steps):
+    for frame_no, step in enumerate([] if _is_mobile(interaction.user.id) else steps):
         if not DARK_STORE.has_clandestine_access(interaction.user.id):
             CASINO_STORE.refund(session_id)
             await edit_with_asset(interaction, PLACES/"alley_guard.png", "vigile.png", GuardView(), "🐻 **Minuit. Le Vigile te met dehors et ta mise en cours est rendue.**")
@@ -4444,8 +4542,9 @@ async def play_roulette(interaction: discord.Interaction, session_id: str, wager
         await edit_with_asset(interaction, path, "roulette.png", discord.ui.View(), f"🎡 **ROULETTE — {label}**\nLa roue tourne... les numéros défilent.")
         await asyncio.sleep(0.22 + frame_no * 0.055)
 
-    # verrouillage exact sur le résultat tiré
-    render_roulette_strip(path, target_index, label, wager, final=True)
+    # verrouillage exact sur le résultat tiré. Mobile : aucun PNG généré.
+    if not _is_mobile(interaction.user.id):
+        render_roulette_strip(path, target_index, label, wager, final=True)
     won=False; mult=0
     if bet_type=="red": won=color=="red"; mult=2
     elif bet_type=="black": won=color=="black"; mult=2
@@ -4532,7 +4631,7 @@ async def play_slots(interaction: discord.Interaction, session_id: str, wager: i
     path = slot_render_path(session_id)
     # Une vraie animation visuelle : les trois rouleaux tournent puis ralentissent.
     delays = [0.16, 0.18, 0.21, 0.25, 0.30, 0.38, 0.48]
-    for delay in delays:
+    for delay in ([] if _is_mobile(interaction.user.id) else delays):
         if not DARK_STORE.has_clandestine_access(interaction.user.id):
             CASINO_STORE.refund(session_id)
             await edit_with_asset(interaction, PLACES/"alley_guard.png", "vigile.png", GuardView(), "🐻 **Minuit. Le Vigile te met dehors et ta mise en cours est rendue.**")
@@ -4551,7 +4650,8 @@ async def play_slots(interaction: discord.Interaction, session_id: str, wager: i
     if mult > 1: result = f"JACKPOT — {payout} Gold crédités !"
     elif mult == 1: result = f"Deux 7 — mise de {wager} Gold rendue."
     else: result = "Aucune combinaison gagnante."
-    render_slot_machine(path, reels, wager, spinning=False, status=result)
+    if not _is_mobile(interaction.user.id):
+        render_slot_machine(path, reels, wager, spinning=False, status=result)
     await edit_with_asset(interaction, path, "slots.png", CasinoResultView(interaction.user.id,"slots"),
                           f"🎰 **MACHINE À SOUS**\n{result}\n💰 Solde : **{settled.get('wallet',0)} Gold**")
 
@@ -4630,6 +4730,18 @@ async def play_horse_race(interaction:discord.Interaction,session_id:str,wager:i
     chosen_odd=odds[choice-1]
     names=[h[0] for h in HORSES]
     path=DATA / "renders" / f"horses_{session_id}.png"
+
+    if _is_mobile(interaction.user.id):
+        won=(winner==choice-1)
+        payout=int(round(wager*chosen_odd)) if won else 0
+        settled=CASINO_STORE.settle(session_id,payout)
+        payout=int(settled.get("payout",payout))
+        if payout: CASTLE_STORE.record(interaction.user.id, "gold_earned", payout)
+        net_gold=int(payout)-int(wager)
+        if net_gold: await announce_gold_activity(interaction.guild, interaction.user, net_gold, f"Casino — Course de chevaux ({chosen_name} x{chosen_odd:.1f})")
+        result=(f"🏆 **{HORSES[winner][0]} gagne !** Paiement **{payout} Gold** (gain net +{max(0,payout-wager)})." if won else f"🏁 **{HORSES[winner][0]} franchit la ligne en premier.** Ta mise est perdue.")
+        await edit_v2_surface(interaction, content=f"🏇 **ARRIVÉE !**\n{result}\n💰 Solde : **{settled.get('wallet',0)} Gold**", view=CasinoResultView(interaction.user.id,"horses"), title="🏇 COURSE DE CHEVAUX")
+        return
 
     render_horse_race(path,pos,odds,names,wager,choice,finish=finish)
     await edit_with_asset(interaction,path,"horses.png",discord.ui.View(),
@@ -5055,23 +5167,18 @@ def _embed_text_v2(embed: discord.Embed | None) -> str:
 
 async def edit_v2_surface(interaction: discord.Interaction, *, view: discord.ui.View, content: str | None=None, embed: discord.Embed | None=None, path: Path | None=None, filename: str | None=None, title: str | None=None):
     text="\n\n".join(x for x in (content, _embed_text_v2(embed)) if x)
+    mobile=_is_mobile(interaction.user.id)
     files=[]
-    if path is not None and filename:
+    if (not mobile) and path is not None and filename:
         files=[discord.File(path,filename=filename)]
-    v2=_legacy_view_to_v2(view,content=text or None,filename=filename if files else None,title=title)
+    v2=_legacy_view_to_v2(view,content=text or None,filename=(filename if files else None),title=title)
     await interaction.edit_original_response(content=None, attachments=files, view=v2)
 
 async def edit_with_asset(interaction: discord.Interaction, path: Path, filename: str, view: discord.ui.View, content: str | None=None):
-    file = discord.File(path, filename=filename)
-    # Les sous-menus (Marché/Forge/etc.) utilisent parfois des embeds.
-    # Quand on change de lieu ou qu'on revient au Hub, on les efface explicitement
-    # pour éviter qu'une ancienne fiche reste affichée sous la nouvelle image.
-    v2view = _legacy_view_to_v2(view, content=content, filename=filename, title=_place_title_from_filename(filename))
-    await interaction.edit_original_response(
-        content=None,
-        attachments=[file],
-        view=v2view,
-    )
+    mobile=_is_mobile(interaction.user.id)
+    files=[] if mobile else [discord.File(path, filename=filename)]
+    v2view = _legacy_view_to_v2(view, content=content, filename=(None if mobile else filename), title=_place_title_from_filename(filename))
+    await interaction.edit_original_response(content=None,attachments=files,view=v2view)
 
 EVENTS = BASE / "assets" / "events"
 
@@ -5268,13 +5375,17 @@ async def _send_personal_place(interaction: discord.Interaction, destination: st
         castle_home_content(interaction.user.id) if destination == "castle" else
         f"{data['emoji']} **{data['label']} de Altherya**"
     )
-    file = discord.File(image, filename="lieu.png")
-    v2view = _legacy_view_to_v2(view, content=content, filename="lieu.png", title=f"{data['emoji']} {data['label'].upper()} — ALTHÉRYA")
+    mobile=_is_mobile(interaction.user.id)
+    file = None if mobile else discord.File(image, filename="lieu.png")
+    v2view = _legacy_view_to_v2(view, content=content, filename=(None if mobile else "lieu.png"), title=f"{data['emoji']} {data['label'].upper()} — ALTHÉRYA")
     if edit:
         await safe_defer(interaction)
-        await interaction.edit_original_response(content=None, attachments=[file], embeds=[], view=v2view)
+        await interaction.edit_original_response(content=None, attachments=([file] if file else []), view=v2view)
     else:
-        await interaction.response.send_message(file=file, view=v2view, ephemeral=True)
+        if file:
+            await interaction.response.send_message(file=file, view=v2view, ephemeral=True)
+        else:
+            await interaction.response.send_message(view=v2view, ephemeral=True)
 
 async def travel(interaction: discord.Interaction, destination: str, *, edit: bool = False):
     # Depuis le Hub public : création d'une unique session privée.
@@ -5282,19 +5393,19 @@ async def travel(interaction: discord.Interaction, destination: str, *, edit: bo
     await _send_personal_place(interaction, destination, edit=edit)
 
 async def return_to_hub(interaction: discord.Interaction):
-    """Retourne à Altherya dans LA MÊME fenêtre privée, sans empiler de messages."""
-    file = discord.File(PLACES / "hub.png", filename="altherya_city.png")
+    """Retour au hub adapté au mode choisi par le joueur."""
     try:
+        if _is_mobile(interaction.user.id):
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(content=None,attachments=[],view=MobileCityView())
+            else:
+                await interaction.edit_original_response(content=None,attachments=[],view=MobileCityView())
+            return
+        file=discord.File(PLACES / "hub.png",filename="altherya_city.png")
         if not interaction.response.is_done():
-            await interaction.response.edit_message(
-                content=None,
-                attachments=[file], embeds=[], view=HubView(private_session=True),
-            )
+            await interaction.response.edit_message(content=None,attachments=[file],view=HubView(private_session=True))
         else:
-            await interaction.edit_original_response(
-                content=None,
-                attachments=[file], embeds=[], view=HubView(private_session=True),
-            )
+            await interaction.edit_original_response(content=None,attachments=[file],view=HubView(private_session=True))
     except (discord.NotFound, discord.HTTPException):
         pass
 
@@ -5318,9 +5429,8 @@ def _save_hub_state(guild_id: int, channel_id: int, message_id: int):
     )
 
 async def _publish_hub(channel: discord.abc.Messageable) -> discord.Message:
-    # V2.10 : le texte et l'image vivent directement dans le LayoutView.
-    file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
-    return await channel.send(file=file, view=WorldHubView())
+    # V2.32 : premier écran ultra-léger, choix PC/Mobile avant tout média.
+    return await channel.send(view=DisplayModeSelectView())
 
 async def ensure_fixed_hub():
     """Réactive le Hub configuré après un redémarrage du bot."""
@@ -5332,10 +5442,7 @@ async def ensure_fixed_hub():
     try:
         channel = bot.get_channel(int(channel_id)) or await bot.fetch_channel(int(channel_id))
         message = await channel.fetch_message(int(message_id))
-        file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
-        await message.edit(
-            content=None, embeds=[], attachments=[file], view=WorldHubView(),
-        )
+        await message.edit(content=None, attachments=[], view=DisplayModeSelectView())
     except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
         # Le Hub a probablement été supprimé ou le salon n'est plus accessible.
         # Un administrateur peut simplement relancer /legacy dans le salon voulu.
@@ -6664,7 +6771,7 @@ async def on_ready():
         else:
             start_expedition_monitor(run.run_id)
 
-    bot.add_view(WorldHubView())
+    bot.add_view(DisplayModeSelectView())
     if not gazette_clock.is_running():
         gazette_clock.start()
     # HubView = CityHubV2 (LayoutView) : construit à la demande, ne pas enregistrer via add_view().

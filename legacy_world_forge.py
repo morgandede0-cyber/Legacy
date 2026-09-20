@@ -18,6 +18,7 @@ from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from castle_engine import CastleStore
 from gazette_engine import GazetteStore
+import display_mode as DISPLAY_MODE
 
 # ============================================================
 # CONFIG
@@ -541,20 +542,28 @@ async def edit_with_image(interaction: discord.Interaction, image_path: Path, *,
     donc directement à l'interaction via `edit_message`, qui est la méthode prévue
     par Discord pour modifier le message ayant déclenché le bouton.
     """
-    file = discord.File(image_path, filename=image_path.name)
-    v2=_v2_view(view,title=title,description=description,filename=image_path.name)
+    mobile = DISPLAY_MODE.is_mobile(interaction.user.id)
+    file = None if mobile else discord.File(image_path, filename=image_path.name)
+    v2=_v2_view(view,title=title,description=description,filename=(None if mobile else image_path.name))
     try:
         if not interaction.response.is_done():
-            await interaction.response.edit_message(content=None,embeds=[],attachments=[file],view=v2)
+            await interaction.response.edit_message(content=None,attachments=([file] if file else []),view=v2)
         else:
-            await interaction.edit_original_response(content=None,embeds=[],attachments=[file],view=v2)
+            await interaction.edit_original_response(content=None,attachments=([file] if file else []),view=v2)
     except discord.NotFound:
-        fresh=discord.File(image_path,filename=image_path.name)
-        await interaction.followup.send(file=fresh,view=v2,ephemeral=True)
+        if mobile:
+            await interaction.followup.send(view=v2,ephemeral=True)
+        else:
+            fresh=discord.File(image_path,filename=image_path.name)
+            await interaction.followup.send(file=fresh,view=v2,ephemeral=True)
 
 async def send_with_image(interaction: discord.Interaction, image_path: Path, *, title: str, description: str, view: discord.ui.View, ephemeral=False):
-    file=discord.File(image_path,filename=image_path.name)
-    await interaction.response.send_message(file=file,view=_v2_view(view,title=title,description=description,filename=image_path.name),ephemeral=ephemeral)
+    mobile = DISPLAY_MODE.is_mobile(interaction.user.id)
+    if mobile:
+        await interaction.response.send_message(view=_v2_view(view,title=title,description=description,filename=None),ephemeral=ephemeral)
+    else:
+        file=discord.File(image_path,filename=image_path.name)
+        await interaction.response.send_message(file=file,view=_v2_view(view,title=title,description=description,filename=image_path.name),ephemeral=ephemeral)
 
 # ============================================================
 # WORLD VIEWS
@@ -851,12 +860,13 @@ def render_piece_carousel(branch: str, slot: str, *, mode: str, eq: Dict[str, di
 
 
 async def _edit_carousel(interaction: discord.Interaction, image_path: Path, *, title: str, description: str, view: discord.ui.View):
-    file=discord.File(image_path,filename=image_path.name)
-    v2=_v2_view(view,title=title,description=description,filename=image_path.name)
+    mobile = DISPLAY_MODE.is_mobile(interaction.user.id)
+    file=None if mobile else discord.File(image_path,filename=image_path.name)
+    v2=_v2_view(view,title=title,description=description,filename=(None if mobile else image_path.name))
     if not interaction.response.is_done():
-        await interaction.response.edit_message(content=None,embeds=[],attachments=[file],view=v2)
+        await interaction.response.edit_message(content=None,attachments=([file] if file else []),view=v2)
     else:
-        await interaction.edit_original_response(content=None,embeds=[],attachments=[file],view=v2)
+        await interaction.edit_original_response(content=None,attachments=([file] if file else []),view=v2)
 
 
 class ForgeOwnerView(discord.ui.View):

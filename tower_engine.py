@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 from castle_engine import CastleStore
 from gazette_engine import GazetteStore
 import legacy_world_forge as WORLD_FORGE
+import display_mode as DISPLAY_MODE
 from arena_engine import CLASSES, class_line
 
 BASE = Path(__file__).resolve().parent
@@ -45,12 +46,17 @@ def _v2_view(title: str, description: str, legacy_view: discord.ui.View | None =
     return out
 
 async def _edit_v2(interaction, *, title, description, legacy_view=None, file=None, filename=None, accent=0x6D4B37):
-    view=_v2_view(title, description, legacy_view, image=filename if file else None, accent=accent)
-    await interaction.response.edit_message(content=None, embeds=[], attachments=[file] if file else [], view=view)
+    mobile = DISPLAY_MODE.is_mobile(interaction.user.id)
+    view=_v2_view(title, description, legacy_view, image=(filename if file and not mobile else None), accent=accent)
+    await interaction.response.edit_message(content=None, attachments=([file] if file and not mobile else []), view=view)
 
 async def _send_v2(interaction, *, title, description, legacy_view=None, file=None, filename=None, ephemeral=True, accent=0x6D4B37):
-    view=_v2_view(title, description, legacy_view, image=filename if file else None, accent=accent)
-    await interaction.response.send_message(view=view, file=file, ephemeral=ephemeral)
+    mobile = DISPLAY_MODE.is_mobile(interaction.user.id)
+    view=_v2_view(title, description, legacy_view, image=(filename if file and not mobile else None), accent=accent)
+    if file and not mobile:
+        await interaction.response.send_message(view=view, file=file, ephemeral=ephemeral)
+    else:
+        await interaction.response.send_message(view=view, ephemeral=ephemeral)
 
 # Récompenses modestes : une seule fois par étage.
 FLOORS = {
@@ -521,8 +527,10 @@ class TowerBattleView(discord.ui.View):
 
     async def refresh(self, interaction, extra=""):
         self._sync_ultimate_button()
-        path = await render_battle(self.state, self.avatar_bytes)
-        file = discord.File(path, filename="ashkar_battle.png")
+        file = None
+        if not DISPLAY_MODE.is_mobile(interaction.user.id):
+            path = await render_battle(self.state, self.avatar_bytes)
+            file = discord.File(path, filename="ashkar_battle.png")
         e = FLOORS[self.state.floor]
         desc = f"{class_line(self.state.class_key)}\n**{e['name']}** • Étage **{self.state.floor}/10**"
         if extra:
@@ -661,15 +669,19 @@ class TowerBattleView(discord.ui.View):
             return
         reward = f"🪙 **+{e['gold']} Gold**" + (f"   🔷 **+{e['pouciel']} Pouciel**" if e["pouciel"] else "")
         self.state.log = f"🏆 VICTOIRE ! Étage {self.state.floor} validé. {reward}"
-        path = await render_battle(self.state, self.avatar_bytes)
-        file = discord.File(path, filename="ashkar_battle.png")
+        file = None
+        if not DISPLAY_MODE.is_mobile(interaction.user.id):
+            path = await render_battle(self.state, self.avatar_bytes)
+            file = discord.File(path, filename="ashkar_battle.png")
         await _edit_v2(interaction, title=f"🏆 Étage {self.state.floor} terminé !", description=f"**{e['name']}** est vaincu.\n\n{reward}\n\nL'étage reste **définitivement validé**.\nTu pourras choisir à nouveau ta classe avant le prochain étage.", legacy_view=PostBattleView(self.state.owner_id, self.state.class_key, self.state.floor, won=True), file=file, filename="ashkar_battle.png", accent=0xD6A84B)
 
     async def finish_loss(self, interaction):
         self.finished = True
         self.state.log = "💀 Défaite. Aucun étage perdu : tu pourras retenter ce combat."
-        path = await render_battle(self.state, self.avatar_bytes)
-        file = discord.File(path, filename="ashkar_battle.png")
+        file = None
+        if not DISPLAY_MODE.is_mobile(interaction.user.id):
+            path = await render_battle(self.state, self.avatar_bytes)
+            file = discord.File(path, filename="ashkar_battle.png")
         await _edit_v2(interaction, title="💀 Défaite", description=f"Tu n'as pas vaincu **{FLOORS[self.state.floor]['name']}**.\n\n✅ Tes étages déjà validés restent acquis.\n🔁 Tu peux retenter cet étage et même changer de classe avant le prochain essai.", legacy_view=PostBattleView(self.state.owner_id, self.state.class_key, self.state.floor, won=False), file=file, filename="ashkar_battle.png", accent=0x8B1E1E)
 
     async def flee(self, interaction: discord.Interaction):
@@ -723,8 +735,10 @@ class PostBattleView(discord.ui.View):
 
         state = make_state(interaction.user, floor, self.class_key)
         avatar = await _avatar_bytes(interaction.user)
-        path = await render_battle(state, avatar)
-        file = discord.File(path, filename="ashkar_battle.png")
+        file = None
+        if not DISPLAY_MODE.is_mobile(interaction.user.id):
+            path = await render_battle(state, avatar)
+            file = discord.File(path, filename="ashkar_battle.png")
         view = TowerBattleView(state, avatar)
         await _edit_v2(interaction, title=f"🗼 Tour d'Ashkar — Étage {floor}", description=f"{class_line(self.class_key)}\n\n**{FLOORS[floor]['name']}** se dresse devant toi.\nChoisis ton attaque.", legacy_view=view, file=file, filename="ashkar_battle.png", accent=0x6D4B37 if floor < 10 else 0x8B1E1E)
 
@@ -785,6 +799,8 @@ async def show_lobby(interaction: discord.Interaction, *, edit=False):
     view = TowerClassView(interaction.user.id)
     content = _tower_class_content(interaction.user.id, next_floor, None)
     poster = ASSET_DIR / "tower_poster.png"
+    if DISPLAY_MODE.is_mobile(interaction.user.id):
+        poster = Path("__mobile_no_poster__")
     embed = discord.Embed(
         title="🗼 La Tour d'Ashkar",
         description="Avant chaque étage, choisis ta classe. Tu peux en changer librement **entre deux étages**.",
