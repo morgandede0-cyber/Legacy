@@ -2716,7 +2716,8 @@ class BattleView(discord.ui.View):
         actor=state.actor(); skills=actor.cfg["skills"]
         for action, style in [("light",discord.ButtonStyle.success),("heavy",discord.ButtonStyle.danger),("ultimate",discord.ButtonStyle.primary),("defend",discord.ButtonStyle.secondary)]:
             sk=skills[action]
-            label=sk["name"]
+            type_label = {"light":"Rapide", "heavy":"Lourde", "defend":"Défense", "ultimate":"Ultime"}[action]
+            label=f"{type_label} • {sk['name']}"
             emoji=sk["emoji"]
             btn=discord.ui.Button(label=label, emoji=emoji, style=style, custom_id=f"arena:{state.battle_id[:12]}:{state.turn_no}:{action}")
             if action == "ultimate" and actor.ultimate_cd > 0:
@@ -2790,10 +2791,11 @@ async def _edit_arena_surface(surface, *, content: str, view: discord.ui.View):
     Les messages éphémères ne sont pas de vrais messages de salon :
     ``discord.Message.edit`` retourne alors 404 / Unknown Message (10008).
     """
+    v2 = _legacy_view_to_v2(view, content=content, title="⚔️ ARÈNE D’ALTHERYA", accent=0xB67A2A)
     if isinstance(surface, discord.Interaction):
-        await surface.edit_original_response(content=content, attachments=[], embeds=[], view=view)
+        await surface.edit_original_response(attachments=[], view=v2)
         return
-    await surface.edit(content=content, attachments=[], embeds=[], view=view)
+    await surface.edit(attachments=[], view=v2)
 
 
 async def run_bot_turn(state: BattleState, surface):
@@ -2922,13 +2924,16 @@ def _forge_asset(key,level):
     candidate=BASE/"assets"/"equipment"/f"{key}_{level}.png"
     return candidate if candidate.exists() else PLACES/"forge.png"
 
-def forge_home_content(user_id:int)->str:
+def forge_home_content(user_id:int, notice:str|None=None)->str:
     owned=EXPEDITION_STORE.owned_equipment(user_id); g=EXPEDITION_STORE.get_gear(user_id); lvl=CASTLE_STORE.current_level(user_id)
     lines=[]
     for key,(emoji,label) in FORGE_EQUIPMENT.items():
         if owned.get(key): lines.append(f"{emoji} **{_gear_name(key,_gear_level(g,key))}** — Niv.{_gear_level(g,key)}/5")
         else: lines.append(f"{emoji} **{label}** — 🔒 à acheter au Marché")
-    return "🔨 **Forge de Altherya**\n\n🔥 Niveau joueur : **"+str(lvl)+"**\n\n"+"\n".join(lines) + npc_alcohol_reaction(user_id, "forgeron")
+    txt = "🔨 **Forge de Altherya**\n\n🔥 Niveau joueur : **"+str(lvl)+"**\n\n"+"\n".join(lines) + npc_alcohol_reaction(user_id, "forgeron")
+    if notice:
+        txt += "\n\n" + notice
+    return txt
 
 def forge_carousel_embed(user_id:int,index:int=0,notice:str|None=None)->discord.Embed:
     """Carrousel graphique de la Forge : un équipement affiché à la fois."""
@@ -3001,12 +3006,61 @@ class ForgeView(discord.ui.View):
     def __init__(self, owner_id:int|None=None):
         super().__init__(timeout=None); self.owner_id=int(owner_id) if owner_id is not None else None
         for idx,(key,(emoji,label)) in enumerate(FORGE_EQUIPMENT.items()):
-            b=discord.ui.Button(label=f"{label} • Améliorer",emoji=emoji,style=discord.ButtonStyle.success,row=0 if idx<2 else 1,custom_id=f"legacy:forge:grid:{key}")
+            # V2.41 — le panneau unique affiche directement les prérequis de chaque amélioration.
+            owned=EXPEDITION_STORE.owned_equipment(self.owner_id or 0) if self.owner_id else {}
+            gear=EXPEDITION_STORE.get_gear(self.owner_id) if self.owner_id else None
+            current_level=_gear_level(gear,key) if gear is not None else 1
+            detail_lines=[]
+            can_upgrade=True
+            if self.owner_id is not None and not owned.get(key):
+                detail_lines=["🔒 À acheter au Marché avant de pouvoir l’améliorer."]
+                can_upgrade=False
+            elif self.owner_id is not None and current_level>=5:
+                detail_lines=["👑 Niveau maximum atteint : **5/5**."]
+                can_upgrade=False
+            elif self.owner_id is not None:
+                target=current_level+1
+                player_lvl=CASTLE_STORE.current_level(self.owner_id)
+                req=FORGE_LEVEL_REQUIREMENTS[target]
+                recipe=BAG_UPGRADE_RECIPES[target] if key=="bag" else UPGRADE_RECIPES[target]
+                inv=EXPEDITION_STORE.get_resources(self.owner_id)
+                wallet=ECONOMY.get_balance(self.owner_id).wallet
+                gold=FORGE_GOLD_COSTS["bag" if key=="bag" else "tool"][target]
+                detail_lines.append(f"**{_gear_name(key,current_level)} → {_gear_name(key,target)}** • Niveau **{current_level} → {target}**")
+                detail_lines.append(f"{'✅' if player_lvl>=req else '❌'} Niveau joueur : **{player_lvl}/{req}** • {'✅' if wallet>=gold else '❌'} Prix : **{gold} Gold**")
+                mats=[]
+                for name,qty in recipe.items():
+                    have=inv.get(name,0)
+                    mats.append(f"{'✅' if have>=qty else '❌'} {name} **{have}/{qty}**")
+                if mats:
+                    detail_lines.append("📦 " + " • ".join(mats))
+                if key=="bag":
+                    detail_lines.append(f"🎒 Capacité après amélioration : **{BAG_LEVELS[target]['capacity']} places**")
+                can_upgrade=player_lvl>=req and wallet>=gold and all(inv.get(n,0)>=q for n,q in recipe.items())
+                detail_lines.append("🟢 **Prêt à améliorer**" if can_upgrade else "🔒 **Conditions incomplètes**")
+            b=discord.ui.Button(label=f"{label} • Améliorer",emoji=emoji,style=(discord.ButtonStyle.success if can_upgrade else discord.ButtonStyle.secondary),disabled=not can_upgrade,row=0 if idx<2 else 1,custom_id=f"legacy:forge:grid:{key}")
+            b._altherya_v2_description="\n".join(detail_lines) if detail_lines else "Consulte les conditions nécessaires pour améliorer cet équipement."
             async def cb(i,k=key):
                 uid=self.owner_id or i.user.id
-                if i.user.id!=uid: await i.response.send_message("Cette forge appartient à un autre joueur.",ephemeral=True); return
-                await safe_defer(i); index=list(FORGE_EQUIPMENT.keys()).index(k)
-                await edit_v2_surface(i,path=PLACES/"forge.png",filename="forge.png",embed=forge_carousel_embed(uid,index),view=ForgeUpgradeView(uid,index),title="⚒️ FORGE D’ALTHERYA")
+                if i.user.id!=uid:
+                    await i.response.send_message("Cette forge appartient à un autre joueur.",ephemeral=True)
+                    return
+                gear_before=EXPEDITION_STORE.get_gear(uid)
+                old_level=_gear_level(gear_before,k)
+                await safe_defer(i)
+                before_gold=ECONOMY.get_balance(uid).wallet
+                ok,msg=EXPEDITION_STORE.upgrade(uid,k)
+                if ok:
+                    target=old_level+1
+                    after_gold=ECONOMY.get_balance(uid).wallet
+                    CASTLE_STORE.add_xp(uid,XP_REWARDS.get(f"forge_{target}",0))
+                    CASTLE_STORE.record(uid,"forge_upgrade",1)
+                    await announce_achievement(i, f"gear:{k}:{target}")
+                    await announce_gold_activity(i.guild, i.user, after_gold-before_gold, f"Amélioration à la Forge : {_gear_name(k,target)}")
+                notice=("✅ **"+msg+"**") if ok else ("❌ **"+msg+"**")
+                await edit_with_asset(i,PLACES/"forge.png","forge.png",ForgeView(uid),forge_home_content(uid,notice))
+                if ok:
+                    await show_pending_levelups(i, uid)
             b.callback=cb; self.add_item(b)
         back=discord.ui.Button(label="Rentrer en ville",emoji="🏙️",style=discord.ButtonStyle.secondary,row=2,custom_id="legacy:forge:back")
         back.callback=return_to_hub; self.add_item(back)
@@ -3107,56 +3161,27 @@ def forge_upgrade_content(user_id:int,key:str)->str:
 
 
 def expedition_home_content(user_id: int, notice: str | None = None) -> str:
-    """Panneau des petites annonces installé à la place de l'ancien tableau d'expédition."""
+    """Panneau compact : les annonces sont déjà affichées dans les cartes d'action V2."""
     state = JOB_BOARD_STORE.get_board(user_id)
     lines = [
-        "📌 **PANNEAU DES PETITES ANNONCES D'ALTHERYA**",
-        "",
-        "Choisis **un seul petit boulot** parmi les 5 propositions.",
-        "Une fois une annonce acceptée, tout le panneau est retiré et sera renouvelé **1 heure plus tard**.",
+        "Choisis **un seul petit boulot** parmi les propositions ci-dessous.",
+        "Une annonce acceptée verrouille le panneau pendant **1 heure**.",
     ]
-
     if notice:
         lines.extend(["", notice])
-
     pending = JOB_BOARD_STORE.pending_reward(user_id)
     if pending:
-        job=pending["job"]; rarity=JOB_RARITIES[job.rarity]
-        lines.extend(["", f"🧾 **Mission en cours : {job.title}**", f"{rarity['emoji']} {rarity['label']} • 💰 **{job.reward} Gold**"])
+        job = pending["job"]; rarity = JOB_RARITIES[job.rarity]
+        lines.extend(["", f"🧾 **Mission : {job.title}**", f"{rarity['emoji']} {rarity['label']} • 💰 **{job.reward} Gold**"] )
         if pending["ready"]:
-            lines.extend(["", "🟢 **Mission terminée — ta récompense t'attend sur le panneau.**"])
+            lines.append("🟢 **Mission terminée — récupère ta récompense.**")
         else:
-            lines.extend(["", f"🔴 **Récompense verrouillée** • disponible <t:{pending['ready_at']}:R>"])
+            lines.append(f"🔴 **En cours** • récompense disponible <t:{pending['ready_at']}:R>")
         return "\n".join(lines)
-
     if state.cooling_down:
-        lines.extend([
-            "",
-            "⏳ **Le panneau est en cours de renouvellement.**",
-            f"📜 Nouvelles annonces <t:{state.next_board_at}:R> • <t:{state.next_board_at}:t>",
-            "",
-            "Les 4 autres annonces du précédent tirage ont été retirées.",
-        ])
-        return "\n".join(lines)
-
-    if not state.jobs:
-        lines.extend(["", "🔄 Les nouvelles annonces sont en préparation. Appuie sur **Actualiser**."])
-        return "\n".join(lines)
-
-    lines.extend(["", "**ANNONCES DISPONIBLES**", ""])
-    for index, job in enumerate(state.jobs, start=1):
-        rarity = JOB_RARITIES[job.rarity]
-        lines.append(
-            f"**{index}. {job.title}**\n"
-            f"{rarity['emoji']} {rarity['label']} • 💰 **{job.reward} Gold**"
-        )
-        if index != len(state.jobs):
-            lines.append("")
-
-    lines.extend([
-        "",
-        "🎲 Chaque annonce tire sa rareté **indépendamment** : il peut donc y avoir plusieurs légendaires... ou uniquement du commun.",
-    ])
+        lines.extend(["", "⏳ **Renouvellement du panneau en cours.**", f"📜 Nouvelles annonces <t:{state.next_board_at}:R>."])
+    elif not state.jobs:
+        lines.extend(["", "🔄 **Nouvelles annonces en préparation.**"])
     return "\n".join(lines)
 
 
@@ -3170,7 +3195,7 @@ class ExpeditionView(discord.ui.View):
         if self.state is not None and not self.state.cooling_down:
             for index, job in enumerate(self.state.jobs[:5], start=1):
                 button = discord.ui.Button(
-                    label=f"{index}. {job.title[:42]} • {job.reward} G",
+                    label=f"{index}. {job.title[:38]} • {job.reward} Gold",
                     emoji=JOB_RARITIES[job.rarity]["emoji"],
                     style=discord.ButtonStyle.success if job.rarity in {"epic", "legendary"} else discord.ButtonStyle.primary,
                     row=0 if index <= 3 else 1,
@@ -3390,10 +3415,15 @@ class ExplorationLocationView(discord.ui.View):
                             ephemeral=True,
                         )
                         return
-                    await interaction.response.edit_message(
-                        content=activity_content(expedition_key),
-                        view=ExpeditionActivityView(self.owner_id, expedition_key),
-                    )
+                    tools = list(zone_now.get("tools", []))
+                    if len(tools) == 1:
+                        prep = ExpeditionPreparationView(self.owner_id, expedition_key, tools[0])
+                        await interaction.response.edit_message(content=preparation_content(prep), view=prep)
+                    else:
+                        await interaction.response.edit_message(
+                            content=activity_content(expedition_key),
+                            view=ExpeditionActivityView(self.owner_id, expedition_key),
+                        )
 
                 button.callback = destination_cb
                 self.add_item(button)
@@ -3417,14 +3447,11 @@ class ExplorationLocationView(discord.ui.View):
             if interaction.user.id != self.owner_id:
                 await interaction.response.send_message("Cette interface appartient à un autre joueur.", ephemeral=True)
                 return
-            file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
-            embed = discord.Embed(
-                title="🌍 Le Monde d'Elyndor",
-                description="Explore **Altherya**, **KHAZ'GORAM**, **la Tour d’Ashkar**, la **Forêt d’Elarwyn** et le **Mont Vorak**.",
-                color=0xB67A2A,
-            )
-            embed.set_image(url="attachment://elyndor_map.png")
-            await interaction.response.edit_message(content=None, embed=embed, attachments=[file], view=WorldHubView(private_session=True))
+            if _is_mobile(interaction.user.id):
+                await interaction.response.edit_message(content=None, attachments=[], view=MobileWorldView())
+            else:
+                file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
+                await interaction.response.edit_message(content=None, attachments=[file], view=WorldHubV2(private_session=True))
 
         refresh.callback = refresh_cb
         world.callback = world_cb
@@ -3518,10 +3545,10 @@ def preparation_content(view: "ExpeditionPreparationView") -> str:
         f"{location['emoji']} **{location['name']} — {zone['name']}**\n"
         f"🎯 Activité : **{_activity_label(view.tool_key)}**\n"
         f"⏳ Durée : **{zone['duration_label']}**\n\n"
-        "### 🔧 CARROUSEL OUTIL\n"
+        "### 🔧 OUTIL ÉQUIPÉ\n"
         f"◀️  {tool_line}  ▶️\n"
         f"*Versions débloquées : niveau 1 à {gear.tool_level(view.tool_key)}*\n\n"
-        "### 🎒 CARROUSEL SACOCHE\n"
+        "### 🎒 SACOCHE ÉQUIPÉE\n"
         f"◀️  {bag_line}  ▶️\n"
         f"*Sacoches débloquées : niveau 1 à {gear.bag_level}*\n\n"
         + ("✅ **Prêt à partir.**" if ready else "❌ **Outil et sacoche obligatoires pour lancer l'expédition.**")
@@ -3627,9 +3654,10 @@ class ExpeditionPreparationView(discord.ui.View):
             start_expedition_monitor(run.run_id)
 
         async def back_cb(interaction: discord.Interaction):
+            location_key = EXPEDITIONS[self.expedition_key]["location_key"]
             await interaction.response.edit_message(
-                content=activity_content(self.expedition_key),
-                view=ExpeditionActivityView(self.owner_id, self.expedition_key),
+                content=location_home_content(self.owner_id, location_key),
+                view=ExplorationLocationView(self.owner_id, location_key),
             )
 
         launch.callback = launch_cb; back.callback = back_cb
@@ -5051,8 +5079,18 @@ class CastleView(discord.ui.View):
             b=discord.ui.Button(label=label,emoji=emoji,style=discord.ButtonStyle.primary,custom_id=f'legacy:castle:{key}')
             async def cb(interaction:discord.Interaction,k=key):
                 await safe_defer(interaction)
-                if k=='podium': await show_castle_podium(interaction)
-                else: await show_castle_daily(interaction)
+                if k=='podium':
+                    await show_castle_podium(interaction)
+                else:
+                    ok,g=CASTLE_STORE.claim_daily(interaction.user.id)
+                    if ok:
+                        await announce_gold_activity(interaction.guild, interaction.user, g, "Récompense journalière du Château")
+                        notice=f"\n\n🎉 **Récompense récupérée : +{g} Gold et +{DAILY_XP} XP.**"
+                    else:
+                        notice="\n\n⏳ **Récompense journalière déjà récupérée aujourd’hui.**"
+                    await edit_with_asset(interaction,PLACES/'castle.png','castle.png',CastleView(),castle_home_content(interaction.user.id)+notice)
+                    if ok:
+                        await show_pending_levelups(interaction, interaction.user.id)
             b.callback=cb; self.add_item(b)
         back=discord.ui.Button(label='Retour en ville',emoji='↩️',style=discord.ButtonStyle.secondary,custom_id='legacy:castle:back')
         back.callback=return_to_hub; self.add_item(back)
@@ -5356,7 +5394,7 @@ def _legacy_view_to_v2(view: discord.ui.View, *, content: str | None = None, fil
         for index, button in enumerate(buttons):
             emoji = str(getattr(button, 'emoji', '') or '◆')
             label = str(getattr(button, 'label', None) or 'Action')
-            description = _v2_action_description(button)
+            description = getattr(button, "_altherya_v2_description", None) or _v2_action_description(button)
             children.append(discord.ui.Section(f"### {emoji} {label}\n{description}", accessory=button))
             if index != len(buttons) - 1:
                 children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
@@ -5425,7 +5463,7 @@ async def _open_place_after_scene(interaction: discord.Interaction, destination:
     data = DESTINATIONS[destination]
     view = (TavernView() if destination == "tavern" else MarketView() if destination == "market" else
             BankView() if destination == "bank" else ArenaView() if destination == "arena" else
-            ExpeditionView(interaction.user.id) if destination == "expeditions" else ForgeView() if destination == "forge" else
+            ExpeditionView(interaction.user.id) if destination == "expeditions" else ForgeView(interaction.user.id) if destination == "forge" else
             DarkAlleyView() if destination == "alley" else CastleView() if destination == "castle" else PlaceView(destination))
     content = (arena_home_content(interaction.user.id) if destination == "arena" else
                expedition_home_content(interaction.user.id) if destination == "expeditions" else
@@ -5588,7 +5626,7 @@ async def _send_personal_place(interaction: discord.Interaction, destination: st
         BankView() if destination == "bank" else
         ArenaView() if destination == "arena" else
         ExpeditionView(interaction.user.id) if destination == "expeditions" else
-        ForgeView() if destination == "forge" else
+        ForgeView(interaction.user.id) if destination == "forge" else
         DarkAlleyView() if destination == "alley" else
         CastleView() if destination == "castle" else
         PlaceView(destination)

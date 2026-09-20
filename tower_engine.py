@@ -411,7 +411,13 @@ class TowerClassView(discord.ui.View):
                 self.class_key = class_key
                 self.sync_buttons()
                 floor = STORE.progress(interaction.user.id) + 1
-                await interaction.response.edit_message(content=_tower_class_content(interaction.user.id, floor, self.class_key), view=self)
+                await _edit_v2(
+                    interaction,
+                    title="🗼 Tour d'Ashkar — Choix de classe",
+                    description=_tower_class_content(interaction.user.id, floor, self.class_key),
+                    legacy_view=self,
+                    accent=0x6D4B37,
+                )
             btn.callback = choose
             self.add_item(btn)
 
@@ -458,7 +464,13 @@ class TowerClassView(discord.ui.View):
 
     async def back_cb(self, interaction: discord.Interaction):
         try:
-            await interaction.response.edit_message(content="🌍 Retour au monde. Utilise les boutons de la carte principale.", embed=None, attachments=[], view=None)
+            mobile = DISPLAY_MODE.is_mobile(interaction.user.id)
+            if mobile:
+                view = discord.ui.LayoutView(timeout=900)
+                view.add_item(discord.ui.Container(discord.ui.TextDisplay("# 🌍 MONDE D’ELYNDOR\nRetourne au panneau principal pour choisir ta destination."), accent_colour=0x6D4B37))
+                await interaction.response.edit_message(content=None, attachments=[], view=view)
+            else:
+                await interaction.response.edit_message(content=None, attachments=[], view=None)
         except discord.HTTPException:
             pass
 
