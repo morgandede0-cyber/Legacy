@@ -5062,7 +5062,7 @@ async def edit_v2_surface(interaction: discord.Interaction, *, view: discord.ui.
     if path is not None and filename:
         files=[discord.File(path,filename=filename)]
     v2=_legacy_view_to_v2(view,content=text or None,filename=filename if files else None,title=title)
-    await interaction.edit_original_response(content=None,attachments=files,embeds=[],view=v2)
+    await interaction.edit_original_response(content=None, attachments=files, view=v2)
 
 async def edit_with_asset(interaction: discord.Interaction, path: Path, filename: str, view: discord.ui.View, content: str | None=None):
     file = discord.File(path, filename=filename)
@@ -5073,7 +5073,6 @@ async def edit_with_asset(interaction: discord.Interaction, path: Path, filename
     await interaction.edit_original_response(
         content=None,
         attachments=[file],
-        embeds=[],
         view=v2view,
     )
 
@@ -6671,7 +6670,9 @@ async def on_ready():
     bot.add_view(WorldHubView())
     if not gazette_clock.is_running():
         gazette_clock.start()
-    bot.add_view(HubView())
+    # HubView est un LayoutView Components V2 construit à la demande.
+    # Ne pas l'enregistrer via add_view(): Discord.py exige une vue persistante
+    # entièrement compatible et cet enregistrement déclenchait on_ready.
     bot.add_view(TavernView())
     bot.add_view(TavernBarView())
     bot.add_view(TavernDrinksView())
