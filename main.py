@@ -115,6 +115,24 @@ def _mobile_meter(value: int, maximum: int, width: int = 10) -> str:
 
 def _mobile_card_table(cards: list[dict]) -> str:
     return "  ".join(f"〔{c['rank']}{ {'S':'♠','H':'♥','D':'♦','C':'♣'}[c['suit']] }〕" for c in cards)
+
+
+def _mobile_coin(face: str) -> str:
+    letter = "P" if str(face).lower().startswith("p") else "F"
+    return ("```\n"
+            "      ╭─────────╮\n"
+            "    ╭─┤         ├─╮\n"
+            f"    │ │    {letter}    │ │\n"
+            "    ╰─┤         ├─╯\n"
+            "      ╰─────────╯\n"
+            "```")
+
+def _mobile_slots_line(values, stopped=0) -> str:
+    cells=[]
+    for idx, value in enumerate(values):
+        mark="🔒" if idx < stopped else "↕️"
+        cells.append(f"### 〔 {value} 〕 {mark}")
+    return "\n".join(cells)
 if shared_economy_enabled():
     _eco_diag = shared_economy_diagnostics()
     print(f"[ECONOMIE COMMUNE] PostgreSQL actif • migration initiale: {MIGRATED_GOLD_PLAYERS} joueur(s) • récupération historique: {'oui' if RECOVERED_LEGACY_WALLET else 'non'} • db={_eco_diag['database']} • host={_eco_diag['host']}:{_eco_diag['port']} • wallets={_eco_diag['wallets']} • empreinte={_eco_diag['fingerprint']}")
@@ -666,18 +684,21 @@ class MobileWorldView(discord.ui.LayoutView):
 class MobileCityView(discord.ui.LayoutView):
     def __init__(self):
         super().__init__(timeout=1800)
-        panel=v2_container(v2_header("📱 ALTHERYA", "Mode mobile • interface allégée"),v2_separator(True),colour=0xB67A2A)
-        for key,data in DESTINATIONS.items():
-            b=discord.ui.Button(label=data["label"],emoji=data["emoji"],style=discord.ButtonStyle.secondary,custom_id=f"altherya:mobile:city:{key}")
+        panel=v2_container(v2_header("🏰 ALTHÉRYA — CITÉ ROYALE", "Choisis un lieu et poursuis ton aventure."),v2_separator(True),colour=0xB67A2A)
+        descriptions={"market":"Achète, vends et équipe ton aventurier.","tavern":"Bois, joue, défie tes amis et écoute le Troubadour.","bank":"Protège tes Gold et consulte ton coffre.","forge":"Améliore ton équipement et renforce tes outils.","arena":"Affronte le Champion ou un autre joueur.","expeditions":"Petits boulots, contrats et récompenses du royaume.","alley":"Marché clandestin, risques et affaires douteuses.","castle":"Quêtes, progression et institutions du royaume."}
+        items=list(DESTINATIONS.items())
+        for idx,(key,data) in enumerate(items):
+            style=discord.ButtonStyle.primary if key in {"tavern","arena","castle"} else (discord.ButtonStyle.danger if key=="alley" else discord.ButtonStyle.secondary)
+            b=discord.ui.Button(label=data["label"],emoji=data["emoji"],style=style,custom_id=f"altherya:mobile:city:{key}")
             async def cb(i,destination=key):
-                _set_display_mode(i.user.id,"mobile")
-                await travel(i,destination,edit=True)
+                _set_display_mode(i.user.id,"mobile"); await travel(i,destination,edit=True)
             b.callback=cb
-            panel.add_item(discord.ui.ActionRow(b))
+            panel.add_item(discord.ui.Section(f"### {data['emoji']} {data['label']}\n{descriptions.get(key,'Explore ce lieu.')}",accessory=b))
+            if idx != len(items)-1: panel.add_item(v2_separator())
         world=discord.ui.Button(label="Monde d'Elyndor",emoji="🌍",style=discord.ButtonStyle.primary,custom_id="altherya:mobile:city:world")
         async def world_cb(i): await i.response.edit_message(attachments=[],view=MobileWorldView())
         world.callback=world_cb
-        panel.add_item(v2_separator()); panel.add_item(discord.ui.ActionRow(world))
+        panel.add_item(v2_separator(True)); panel.add_item(discord.ui.Section("### 🌍 Quitter la cité\nRetourne à la carte du monde d'Elyndor.",accessory=world))
         self.add_item(panel)
 
 class DisplayModeSelectView(discord.ui.LayoutView):
@@ -1703,7 +1724,7 @@ class CoinChoiceView(discord.ui.View):
 
 async def show_coin_choice(interaction: discord.Interaction, session_id: str, wager: int):
     if _is_mobile(interaction.user.id):
-        body = "```\n       ◯\n    PILE / FACE\n       ◯\n```\n**Choisis ton côté :**"
+        body = f"{_mobile_coin('pile')}\n**P = PILE**   •   **F = FACE**\n\n**Choisis ton côté :**"
         await edit_v2_surface(interaction, content=_mobile_game_box("🪙 PILE OU FACE", body, wager=wager), view=CoinChoiceView(interaction.user.id, session_id, wager), title="🪙 JEU")
         return
     path = tavern_render_path(session_id, "coin")
@@ -1715,13 +1736,13 @@ async def show_coin_choice(interaction: discord.Interaction, session_id: str, wa
 async def play_tavern_coin(interaction: discord.Interaction, session_id: str, wager: int, choice: str):
     path = tavern_render_path(session_id, "coin")
     if _is_mobile(interaction.user.id):
-        for frame in ("◯", "◒", "●", "◓", "◯"):
-            await edit_v2_surface(interaction,content=_mobile_game_box("🪙 PILE OU FACE",f"Ton choix : **{choice.title()}**\n\n###      {frame}\n\n*La pièce tourne…*",wager=wager),view=discord.ui.View(),title="🪙 JEU")
-            await asyncio.sleep(0.16)
+        for idx,frame in enumerate(("pile", "face", "pile", "face", "pile")):
+            await edit_v2_surface(interaction,content=_mobile_game_box("🪙 PILE OU FACE",f"Ton choix : **{choice.title()}**\n\n{_mobile_coin(frame)}\n*La pièce tourne…*",wager=wager),view=discord.ui.View(),title="🪙 JEU")
+            await asyncio.sleep(0.11 + idx*0.04)
         result=flip_coin(); payout=wager*2 if result==choice else 0
         actual,wallet,net,bonus=await settle_tavern_game(interaction,session_id,wager,payout,"Pile ou face")
         verdict=(f"🏆 **{result.title()} !**  +{net} Gold{bonus}" if result==choice else f"💀 **{result.title()} !**  -{wager} Gold")
-        await edit_v2_surface(interaction,content=_mobile_game_box("🪙 PILE OU FACE",f"### {'🪙' if result=='pile' else '👑'} {result.upper()}\n\n{verdict}",wager=wager,wallet=wallet),view=TavernResultView(interaction.user.id,"coin"),title="🪙 JEU")
+        await edit_v2_surface(interaction,content=_mobile_game_box("🪙 PILE OU FACE",f"{_mobile_coin(result)}\n### {result.upper()}\n\n{verdict}",wager=wager,wallet=wallet),view=TavernResultView(interaction.user.id,"coin"),title="🪙 JEU")
         return
     for step in range(4):
         render_coin(path, wager, choice, "pile" if step % 2 == 0 else "face", "La pièce tourne...")
@@ -3149,8 +3170,8 @@ class ExpeditionView(discord.ui.View):
         if self.state is not None and not self.state.cooling_down:
             for index, job in enumerate(self.state.jobs[:5], start=1):
                 button = discord.ui.Button(
-                    label=f"Annonce {index}",
-                    emoji="📜",
+                    label=f"{index}. {job.title[:42]} • {job.reward} G",
+                    emoji=JOB_RARITIES[job.rarity]["emoji"],
                     style=discord.ButtonStyle.success if job.rarity in {"epic", "legendary"} else discord.ButtonStyle.primary,
                     row=0 if index <= 3 else 1,
                     custom_id=f"altherya:jobs:accept:{index}:{job.job_id}",
@@ -4248,8 +4269,9 @@ class GuardView(discord.ui.View):
 
             # On fait entrer le joueur en priorité. Le journal économique est secondaire
             # et ne doit jamais bloquer l'accès à la salle après un paiement réussi.
+            wallet_after = ECONOMY.get_balance(interaction.user.id).wallet
             await edit_with_asset(interaction, PLACES/"casino_room.png", "casino.png", CasinoMainView(),
-                                  f"💰 **{result['paid']} Gold remis au Vigile.** Il s'écarte sans poser de question.\n\n" + casino_home_content(interaction.user.id))
+                                  f"💰 **Entrée payée : -{int(result.get('paid', GUARD_ENTRY_FEE))} Gold.**\n🪙 Solde : **{wallet_after} Gold**\nLe pass reste valable jusqu'à minuit : tu ne repaieras pas aujourd'hui.\n\n" + casino_home_content(interaction.user.id))
             await announce_gold_activity(interaction.guild, interaction.user, -int(result.get('paid', GUARD_ENTRY_FEE)), "Entrée payante au Casino clandestin")
 
         async def vip_cb(interaction: discord.Interaction):
@@ -4516,6 +4538,11 @@ async def start_blackjack(interaction: discord.Interaction, session_id: str, wag
         "owner": interaction.user.id, "wager": wager,
         "player": player, "dealer": dealer, "deck": deck,
     }
+    if _is_mobile(interaction.user.id):
+        await edit_v2_surface(interaction, content=_mobile_game_box("🃏 BLACKJACK", "### 🎴 Distribution des cartes…\n\n🎩 Croupier  `〔 ? 〕 〔 ? 〕`\n\n`──────── VS ────────`\n\n👤 Toi  `〔 ? 〕 〔 ? 〕`", wager=wager), view=discord.ui.View(), title="🃏 CASINO")
+        await asyncio.sleep(0.30)
+        await show_blackjack(interaction, session_id, view=discord.ui.View(), status="Les cartes sont distribuées…")
+        await asyncio.sleep(0.28)
     player_natural = bj_total(player) == 21
     dealer_natural = bj_total(dealer) == 21
     if player_natural or dealer_natural:
@@ -4531,9 +4558,15 @@ async def finish_blackjack(interaction: discord.Interaction, session_id: str, na
     p = bj_total(st["player"])
     d = bj_total(st["dealer"])
     if not dealer_natural:
+        if _is_mobile(interaction.user.id) and p <= 21:
+            await show_blackjack(interaction, session_id, reveal=True, view=discord.ui.View(), status="🎩 Le croupier révèle sa main…")
+            await asyncio.sleep(0.32)
         while p <= 21 and d < 17:
             st["dealer"].append(st["deck"].pop())
             d = bj_total(st["dealer"])
+            if _is_mobile(interaction.user.id):
+                await show_blackjack(interaction, session_id, reveal=True, view=discord.ui.View(), status="🎴 Le croupier tire une carte…")
+                await asyncio.sleep(0.34)
     wager = st["wager"]
 
     if natural and dealer_natural:
@@ -4587,6 +4620,9 @@ class BlackjackView(discord.ui.View):
             if not st:
                 return
             st["player"].append(st["deck"].pop())
+            if _is_mobile(interaction.user.id):
+                await show_blackjack(interaction, self.session_id, view=discord.ui.View(), status="🎴 Nouvelle carte…")
+                await asyncio.sleep(0.26)
             if bj_total(st["player"]) >= 21:
                 await finish_blackjack(interaction, self.session_id)
             else:
@@ -4800,12 +4836,12 @@ async def play_slots(interaction: discord.Interaction, session_id: str, wager: i
         # Les rouleaux tournent ensemble puis s'arrêtent un par un.
         for frame in range(3):
             fake = random.choices(SLOT_SYMBOLS, k=3)
-            await edit_v2_surface(interaction, content=_mobile_game_box("🎰 MACHINE À SOUS", f"```\n╔═══╦═══╦═══╗\n║ {fake[0]} ║ {fake[1]} ║ {fake[2]} ║\n╚═══╩═══╩═══╝\n```\n*Les rouleaux tournent…*", wager=wager), view=discord.ui.View(), title="🎰 CASINO")
+            await edit_v2_surface(interaction, content=_mobile_game_box("🎰 MACHINE À SOUS", f"{_mobile_slots_line(fake,0)}\n\n*Les rouleaux tournent…*", wager=wager), view=discord.ui.View(), title="🎰 CASINO")
             await asyncio.sleep(0.16 + frame*.04)
         for stopped in range(1,4):
             shown=list(reels)
             for j in range(stopped,3): shown[j]=random.choice(SLOT_SYMBOLS)
-            await edit_v2_surface(interaction, content=_mobile_game_box("🎰 MACHINE À SOUS", f"```\n╔═══╦═══╦═══╗\n║ {shown[0]} ║ {shown[1]} ║ {shown[2]} ║\n╚═══╩═══╩═══╝\n```\n*Rouleau {stopped}/3 verrouillé…*", wager=wager), view=discord.ui.View(), title="🎰 CASINO")
+            await edit_v2_surface(interaction, content=_mobile_game_box("🎰 MACHINE À SOUS", f"{_mobile_slots_line(shown,stopped)}\n\n*Rouleau {stopped}/3 verrouillé…*", wager=wager), view=discord.ui.View(), title="🎰 CASINO")
             await asyncio.sleep(.22 + stopped*.06)
     if reels is None: reels = draw_slot()
     mult = slot_multiplier(reels); payout = wager * mult
@@ -4822,7 +4858,7 @@ async def play_slots(interaction: discord.Interaction, session_id: str, wager: i
         await edit_with_asset(interaction, path, "slots.png", CasinoResultView(interaction.user.id,"slots"),
                               f"🎰 **MACHINE À SOUS**\n{result}\n💰 Solde : **{settled.get('wallet',0)} Gold**")
     else:
-        await edit_v2_surface(interaction, content=_mobile_game_box("🎰 MACHINE À SOUS", f"### ┃ {reels[0]} ┃ {reels[1]} ┃ {reels[2]} ┃\n\n**{result}**", wager=wager, wallet=int(settled.get('wallet',0))), view=CasinoResultView(interaction.user.id,"slots"), title="🎰 CASINO")
+        await edit_v2_surface(interaction, content=_mobile_game_box("🎰 MACHINE À SOUS", f"{_mobile_slots_line(reels,3)}\n\n**{result}**", wager=wager, wallet=int(settled.get('wallet',0))), view=CasinoResultView(interaction.user.id,"slots"), title="🎰 CASINO")
 
 
 # ----- COURSES DE CHEVAUX -----
