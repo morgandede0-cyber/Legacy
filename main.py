@@ -671,11 +671,14 @@ async def show_story_page(interaction: discord.Interaction, chapter: int, notice
 
     embed.set_footer(text=f"Saison 1 • Chapitre {chapter} sur {SEASON_1_CHAPTERS}")
 
-    await interaction.edit_original_response(
-        content=None,
-        attachments=[],
-        embeds=[embed],
+    # Le message du Troubadour est une surface Components V2 : Discord interdit
+    # totalement le champ embeds (même embeds=[]). On convertit donc la fiche
+    # du chapitre en TextDisplay/Container V2 via le renderer commun.
+    await edit_v2_surface(
+        interaction,
+        embed=embed,
         view=StoryCarouselView(interaction.user.id, chapter),
+        title="📖 HISTOIRE DU TROUBADOUR",
     )
 
 
@@ -5056,7 +5059,7 @@ async def edit_v2_surface(interaction: discord.Interaction, *, view: discord.ui.
     if path is not None and filename:
         files=[discord.File(path,filename=filename)]
     v2=_legacy_view_to_v2(view,content=text or None,filename=filename if files else None,title=title)
-    await interaction.edit_original_response(content=None,attachments=files,embeds=[],view=v2)
+    await interaction.edit_original_response(content=None, attachments=files, view=v2)
 
 async def edit_with_asset(interaction: discord.Interaction, path: Path, filename: str, view: discord.ui.View, content: str | None=None):
     file = discord.File(path, filename=filename)
@@ -5067,7 +5070,6 @@ async def edit_with_asset(interaction: discord.Interaction, path: Path, filename
     await interaction.edit_original_response(
         content=None,
         attachments=[file],
-        embeds=[],
         view=v2view,
     )
 
@@ -6665,7 +6667,7 @@ async def on_ready():
     bot.add_view(WorldHubView())
     if not gazette_clock.is_running():
         gazette_clock.start()
-    bot.add_view(HubView())
+    # HubView = CityHubV2 (LayoutView) : construit à la demande, ne pas enregistrer via add_view().
     bot.add_view(TavernView())
     bot.add_view(TavernBarView())
     bot.add_view(TavernDrinksView())
