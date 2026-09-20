@@ -70,6 +70,32 @@ _DICE_FACE = {1:"⚀", 2:"⚁", 3:"⚂", 4:"⚃", 5:"⚄", 6:"⚅"}
 def _dice_face(value: int) -> str:
     return _DICE_FACE.get(int(value), str(value))
 
+_DIE_PIPS = {
+    1:("       ","   ●   ","       "), 2:(" ●     ","       ","     ● "),
+    3:(" ●     ","   ●   ","     ● "), 4:(" ●   ● ","       "," ●   ● "),
+    5:(" ●   ● ","   ●   "," ●   ● "), 6:(" ●   ● "," ●   ● "," ●   ● "),
+}
+
+def _big_dice_pair(a:int,b:int)->str:
+    A=_DIE_PIPS[int(a)]; B=_DIE_PIPS[int(b)]
+    return "\n".join(["┏━━━━━━━┓  ┏━━━━━━━┓", f"┃{A[0]}┃  ┃{B[0]}┃", f"┃{A[1]}┃  ┃{B[1]}┃", f"┃{A[2]}┃  ┃{B[2]}┃", "┗━━━━━━━┛  ┗━━━━━━━┛"])
+
+def _mobile_dice_table(player, bot, phase:str="") -> str:
+    return (f"**🧙 TOI**\n```\n{_big_dice_pair(*player)}\n```\n"
+            f"**TOTAL : {sum(player)}**\n\n`──────── VS ────────`\n\n"
+            f"**🍺 TAVERNIER**\n```\n{_big_dice_pair(*bot)}\n```\n"
+            f"**TOTAL : {sum(bot)}**" + (f"\n\n*{phase}*" if phase else ""))
+
+def _horse_mobile_frame(pos:list[int], finish:int=20, *, chosen:int|None=None, title:str="COURSE EN DIRECT") -> str:
+    lines=[]
+    for i,p in enumerate(pos):
+        p=max(0,min(finish,int(p)))
+        # Le cheval occupe réellement une position sur la piste et atteint 🏁.
+        lane="━"*p + HORSES[i][1] + "━"*max(0,finish-p)
+        marker=" 🔥" if chosen == i+1 else ""
+        lines.append(f"**{i+1}. {HORSES[i][0]}**{marker}\n`{lane}🏁`")
+    return "\n".join(lines)
+
 def _mobile_game_box(title: str, body: str, *, wager: int | None = None, wallet: int | None = None) -> str:
     # HUD texte natif Discord : aucun PNG/GIF, donc rendu immédiat sur mobile.
     meta = []
@@ -1580,16 +1606,23 @@ async def play_tavern_dice(interaction: discord.Interaction, session_id: str, wa
     path = tavern_render_path(session_id, "dice")
 
     if _is_mobile(interaction.user.id):
-        await edit_v2_surface(interaction, content=_mobile_game_box("🎲 LANCER DE DÉS", "`⚄  ⚂   VS   ⚁  ⚅`\n\n🎲 Les dés roulent...", wager=wager), view=discord.ui.View(), title="🎲 JEU")
-        await asyncio.sleep(0.45)
+        # 4 gros dés natifs Discord : 2 joueur + 2 tavernier. Plusieurs frames
+        # courtes donnent l'impression que les dés roulent sans aucun média.
+        for step in range(4):
+            pf=(roll_die(),roll_die()); bf=(roll_die(),roll_die())
+            phase=("🎲 Les quatre dés roulent…", "🎲 Ils rebondissent sur la table…", "🎲 Ça ralentit…", "🎲 Dernier tour…")[step]
+            await edit_v2_surface(interaction, content=_mobile_game_box("🎲 TABLE DE DÉS", _mobile_dice_table(pf,bf,phase), wager=wager), view=discord.ui.View(), title="🎲 JEU")
+            await asyncio.sleep(0.20 + step*0.06)
         player=(roll_die(),roll_die()); bot_roll=(roll_die(),roll_die())
         while sum(player)==sum(bot_roll):
+            await edit_v2_surface(interaction, content=_mobile_game_box("🎲 ÉGALITÉ — RELANCE !", _mobile_dice_table(player,bot_roll,"Les quatre dés repartent !"), wager=wager), view=discord.ui.View(), title="🎲 JEU")
+            await asyncio.sleep(0.30)
             player=(roll_die(),roll_die()); bot_roll=(roll_die(),roll_die())
         p_total,b_total=sum(player),sum(bot_roll)
         payout=wager*2 if p_total>b_total else 0
         actual,wallet,net,bonus=await settle_tavern_game(interaction,session_id,wager,payout,"Lancer de dés")
         verdict=(f"🏆 **VICTOIRE**  +{net} Gold{bonus}" if p_total>b_total else f"💀 **DÉFAITE**  -{wager} Gold")
-        body=f"### TOI  {_dice_face(player[0])} {_dice_face(player[1])}  **{p_total}**\n### TAVERNIER  {_dice_face(bot_roll[0])} {_dice_face(bot_roll[1])}  **{b_total}**\n\n{verdict}"
+        body=_mobile_dice_table(player,bot_roll) + f"\n\n{verdict}"
         await edit_v2_surface(interaction,content=_mobile_game_box("🎲 LANCER DE DÉS",body,wager=wager,wallet=wallet),view=TavernResultView(interaction.user.id,"dice"),title="🎲 JEU")
         return
 
@@ -1682,8 +1715,9 @@ async def show_coin_choice(interaction: discord.Interaction, session_id: str, wa
 async def play_tavern_coin(interaction: discord.Interaction, session_id: str, wager: int, choice: str):
     path = tavern_render_path(session_id, "coin")
     if _is_mobile(interaction.user.id):
-        await edit_v2_surface(interaction,content=_mobile_game_box("🪙 PILE OU FACE",f"Ton choix : **{choice.title()}**\n\n`  🪙  ↻  ?  `",wager=wager),view=discord.ui.View(),title="🪙 JEU")
-        await asyncio.sleep(0.45)
+        for frame in ("◯", "◒", "●", "◓", "◯"):
+            await edit_v2_surface(interaction,content=_mobile_game_box("🪙 PILE OU FACE",f"Ton choix : **{choice.title()}**\n\n###      {frame}\n\n*La pièce tourne…*",wager=wager),view=discord.ui.View(),title="🪙 JEU")
+            await asyncio.sleep(0.16)
         result=flip_coin(); payout=wager*2 if result==choice else 0
         actual,wallet,net,bonus=await settle_tavern_game(interaction,session_id,wager,payout,"Pile ou face")
         verdict=(f"🏆 **{result.title()} !**  +{net} Gold{bonus}" if result==choice else f"💀 **{result.title()} !**  -{wager} Gold")
@@ -1747,8 +1781,9 @@ async def play_tavern_rps(interaction: discord.Interaction, session_id: str, wag
     path = tavern_render_path(session_id, "rps")
     if _is_mobile(interaction.user.id):
         icons={"pierre":"✊","feuille":"✋","ciseaux":"✌️"}
-        await edit_v2_surface(interaction,content=_mobile_game_box("✊ PIERRE • FEUILLE • CISEAUX",f"### {icons[choice]}  VS  ❔\n\n*Pierre... feuille... ciseaux...*",wager=wager),view=discord.ui.View(),title="✊ JEU")
-        await asyncio.sleep(0.5)
+        for call,mark in (("PIERRE…","✊"),("FEUILLE…","✋"),("CISEAUX !","✌️")):
+            await edit_v2_surface(interaction,content=_mobile_game_box("✊ DUEL PFC",f"### {icons[choice]}   VS   {mark}\n\n**{call}**",wager=wager),view=discord.ui.View(),title="✊ JEU")
+            await asyncio.sleep(0.22)
         bot_choice=rps_bot(); outcome=rps_result(choice,bot_choice); payout=wager*2 if outcome>0 else wager if outcome==0 else 0
         actual,wallet,net,bonus=await settle_tavern_game(interaction,session_id,wager,payout,"Pierre feuille ciseaux")
         verdict=(f"🏆 **VICTOIRE** +{net} Gold{bonus}" if outcome>0 else "🤝 **ÉGALITÉ** • mise rendue" if outcome==0 else f"💀 **DÉFAITE** -{wager} Gold")
@@ -4648,10 +4683,12 @@ async def play_roulette(interaction: discord.Interaction, session_id: str, wager
 
     # Mobile : petite sensation de roue en texte, sans fichier ni rendu graphique.
     if _is_mobile(interaction.user.id):
-        fake_a = EUROPEAN_WHEEL[(target_index - 2) % len(EUROPEAN_WHEEL)]
-        fake_b = EUROPEAN_WHEEL[(target_index - 1) % len(EUROPEAN_WHEEL)]
-        await edit_v2_surface(interaction, content=_mobile_game_box("🎡 ROULETTE", f"Pari : **{label}**\n\n`  {fake_a:>2}   ◉   {fake_b:<2}  `\n\n*La bille ralentit…*", wager=wager), view=discord.ui.View(), title="🎡 CASINO")
-        await asyncio.sleep(0.38)
+        # La roue défile puis ralentit : plusieurs éditions texte, aucun rendu image.
+        for off,delay in ((-8,.14),(-5,.16),(-3,.20),(-2,.25),(-1,.32)):
+            center=(target_index+off)%len(EUROPEAN_WHEEL)
+            vals=[EUROPEAN_WHEEL[(center+j)%len(EUROPEAN_WHEEL)] for j in (-1,0,1)]
+            await edit_v2_surface(interaction, content=_mobile_game_box("🎡 ROULETTE", f"Pari : **{label}**\n\n```\n╭────┬────┬────╮\n│ {vals[0]:>2} │ {vals[1]:>2} │ {vals[2]:>2} │\n╰────┴─▲──┴────╯\n```\n*La bille ralentit…*", wager=wager), view=discord.ui.View(), title="🎡 CASINO")
+            await asyncio.sleep(delay)
     # verrouillage exact sur le résultat tiré. Mobile : aucun PNG généré.
     if not _is_mobile(interaction.user.id):
         render_roulette_strip(path, target_index, label, wager, final=True)
@@ -4758,12 +4795,20 @@ async def play_slots(interaction: discord.Interaction, session_id: str, wager: i
         await edit_with_asset(interaction, path, "slots.png", discord.ui.View(), "🎰 **MACHINE À SOUS — les rouleaux tournent...**")
         await asyncio.sleep(delay)
 
+    reels = draw_slot() if _is_mobile(interaction.user.id) else None
     if _is_mobile(interaction.user.id):
-        for frame in range(2):
+        # Les rouleaux tournent ensemble puis s'arrêtent un par un.
+        for frame in range(3):
             fake = random.choices(SLOT_SYMBOLS, k=3)
             await edit_v2_surface(interaction, content=_mobile_game_box("🎰 MACHINE À SOUS", f"```\n╔═══╦═══╦═══╗\n║ {fake[0]} ║ {fake[1]} ║ {fake[2]} ║\n╚═══╩═══╩═══╝\n```\n*Les rouleaux tournent…*", wager=wager), view=discord.ui.View(), title="🎰 CASINO")
-            await asyncio.sleep(0.24 + frame * 0.08)
-    reels = draw_slot(); mult = slot_multiplier(reels); payout = wager * mult
+            await asyncio.sleep(0.16 + frame*.04)
+        for stopped in range(1,4):
+            shown=list(reels)
+            for j in range(stopped,3): shown[j]=random.choice(SLOT_SYMBOLS)
+            await edit_v2_surface(interaction, content=_mobile_game_box("🎰 MACHINE À SOUS", f"```\n╔═══╦═══╦═══╗\n║ {shown[0]} ║ {shown[1]} ║ {shown[2]} ║\n╚═══╩═══╩═══╝\n```\n*Rouleau {stopped}/3 verrouillé…*", wager=wager), view=discord.ui.View(), title="🎰 CASINO")
+            await asyncio.sleep(.22 + stopped*.06)
+    if reels is None: reels = draw_slot()
+    mult = slot_multiplier(reels); payout = wager * mult
     settled = CASINO_STORE.settle(session_id, payout)
     payout = int(settled.get("payout", payout))
     if payout: CASTLE_STORE.record(interaction.user.id, "gold_earned", payout)
@@ -4856,14 +4901,26 @@ async def play_horse_race(interaction:discord.Interaction,session_id:str,wager:i
     path=DATA / "renders" / f"horses_{session_id}.png"
 
     if _is_mobile(interaction.user.id):
-        # Trois frames texte très légères : sensation de course sans PNG ni longue animation.
-        for phase, marks in enumerate(((4,3,2,3),(9,7,8,6),(14,13,12,11)),1):
-            lanes=[]
-            for i,(name,emoji) in enumerate(HORSES):
-                n=max(1,min(14,marks[i] + (2 if i==winner and phase==3 else 0)))
-                lanes.append(f"{emoji} **{name}** `{'·'*n}🏁`")
-            await edit_v2_surface(interaction,content=_mobile_game_box("🏇 COURSE EN DIRECT", "\n".join(lanes)+f"\n\n*Virage {phase}/3...*",wager=wager),view=discord.ui.View(),title="🏇 CASINO")
-            await asyncio.sleep(0.32)
+        # Vraie course texte : les quatre chevaux avancent jusqu'à la ligne.
+        # Le gagnant est fixé par les cotes avant l'animation ; l'animation ne change pas l'économie.
+        mobile_finish=20
+        pos=[0,0,0,0]
+        frame=0
+        while pos[winner] < mobile_finish:
+            frame += 1
+            order=list(range(4)); random.shuffle(order)
+            for i in order:
+                advance=random.randint(1,3)
+                if random.random()<.28: advance+=1
+                if i==winner and frame>=5: advance+=random.randint(0,2)
+                pos[i]=min(mobile_finish,pos[i]+advance)
+                if i!=winner and pos[i]>=mobile_finish: pos[i]=mobile_finish-1
+            if frame>=7 and pos[winner]>=mobile_finish-2: pos[winner]=mobile_finish
+            leader=max(range(4),key=lambda x:pos[x])
+            phase="🏁 DERNIÈRE LIGNE DROITE !" if max(pos)>=15 else (f"🔥 {HORSES[leader][0]} prend la tête !" if frame>1 else "🚦 C'EST PARTI !")
+            body=_horse_mobile_frame(pos,mobile_finish,chosen=choice) + f"\n\n**{phase}**"
+            await edit_v2_surface(interaction,content=_mobile_game_box("🏇 COURSE EN DIRECT",body,wager=wager),view=discord.ui.View(),title="🏇 CASINO")
+            await asyncio.sleep(0.26 if frame<5 else 0.34)
         won=(winner==choice-1)
         payout=int(round(wager*chosen_odd)) if won else 0
         settled=CASINO_STORE.settle(session_id,payout)
@@ -4872,7 +4929,8 @@ async def play_horse_race(interaction:discord.Interaction,session_id:str,wager:i
         net_gold=int(payout)-int(wager)
         if net_gold: await announce_gold_activity(interaction.guild, interaction.user, net_gold, f"Casino — Course de chevaux ({chosen_name} x{chosen_odd:.1f})")
         result=(f"🏆 **{HORSES[winner][0]} gagne !** Paiement **{payout} Gold** (gain net +{max(0,payout-wager)})." if won else f"🏁 **{HORSES[winner][0]} franchit la ligne en premier.** Ta mise est perdue.")
-        await edit_v2_surface(interaction, content=f"🏇 **ARRIVÉE !**\n{result}\n💰 Solde : **{settled.get('wallet',0)} Gold**", view=CasinoResultView(interaction.user.id,"horses"), title="🏇 COURSE DE CHEVAUX")
+        final_body=_horse_mobile_frame(pos,mobile_finish,chosen=choice) + f"\n\n{result}"
+        await edit_v2_surface(interaction, content=_mobile_game_box("🏁 ARRIVÉE !",final_body,wager=wager,wallet=int(settled.get('wallet',0))), view=CasinoResultView(interaction.user.id,"horses"), title="🏇 COURSE DE CHEVAUX")
         return
 
     render_horse_race(path,pos,odds,names,wager,choice,finish=finish)
