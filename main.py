@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 import json
 from pathlib import Path
@@ -46,6 +47,7 @@ import tower_engine as TOWER
 from world_engine import current_event, destination_name, destination_description
 from ui_v2 import container as v2_container, header as v2_header, separator as v2_separator, media_gallery as v2_media_gallery, action_row as v2_action_row
 import display_mode as DISPLAY_MODE
+from sentinel import AltheryaSentinel
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 GUILD_ID = os.getenv("GUILD_ID", "").strip()
 PLACES = BASE / "assets" / "places"
@@ -100,9 +102,9 @@ def _mobile_game_box(title: str, body: str, *, wager: int | None = None, wallet:
     # HUD texte natif Discord : aucun PNG/GIF, donc rendu immédiat sur mobile.
     meta = []
     if wager is not None:
-        meta.append(f"🎟️ **{int(wager):,} G**")
+        meta.append(f"🎟️ **{int(wager):,} Gold**")
     if wallet is not None:
-        meta.append(f"🪙 **{int(wallet):,} G**")
+        meta.append(f"🪙 **{int(wallet):,} Gold**")
     head = f"## {title}"
     if meta:
         head += "\n" + "  •  ".join(meta)
@@ -170,6 +172,7 @@ DESTINATIONS = {
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
+SENTINEL = AltheryaSentinel(bot, BASE)
 
 async def safe_defer(interaction: discord.Interaction):
     if not interaction.response.is_done():
@@ -520,7 +523,7 @@ class WorldHubV2(discord.ui.LayoutView):
         )
         async def mobile_mode_cb(interaction: discord.Interaction):
             _set_display_mode(interaction.user.id, "mobile")
-            await interaction.response.edit_message(attachments=[], view=MobileWorldView())
+            await interaction.response.edit_message(attachments=[], view=MobileWorldView(interaction.user.id))
         mobile_mode.callback = mobile_mode_cb
 
         panel = v2_container(
@@ -632,8 +635,9 @@ class CityHubV2(discord.ui.LayoutView):
 # Le mode mobile conserve toutes les mécaniques mais retire les médias lourds.
 # ============================================================
 class MobileWorldView(discord.ui.LayoutView):
-    def __init__(self):
+    def __init__(self, owner_id: int | None = None):
         super().__init__(timeout=1800)
+        self.owner_id = int(owner_id) if owner_id is not None else None
         pc_mode=discord.ui.Button(label="Mode PC",emoji="🖥️",style=discord.ButtonStyle.primary,custom_id="altherya:mobile:top_pc")
         mobile_mode=discord.ui.Button(label="Mode Mobile",emoji="📱",style=discord.ButtonStyle.success,custom_id="altherya:mobile:top_mobile",disabled=True)
         async def top_pc_cb(i):
@@ -642,7 +646,8 @@ class MobileWorldView(discord.ui.LayoutView):
             await i.response.edit_message(attachments=[file],view=WorldHubV2(private_session=True))
         pc_mode.callback=top_pc_cb
         panel=v2_container(
-            v2_header("📱 ELYNDOR — MODE MOBILE", "Navigation légère • mêmes données • mêmes fonctions"),
+            v2_header("🌍 ELYNDOR", "Mode mobile • navigation rapide et sans médias lourds"),
+            discord.ui.TextDisplay((f"🧙 **Niveau {CASTLE_STORE.current_level(self.owner_id)}**  •  💰 **{ECONOMY.get_balance(self.owner_id).wallet:,} Gold**" if self.owner_id is not None else "Choisis ta destination.")),
             v2_action_row(pc_mode,mobile_mode),
             v2_separator(True), colour=0xB67A2A,
         )
@@ -658,7 +663,7 @@ class MobileWorldView(discord.ui.LayoutView):
             async def cb(i,destination=key):
                 _set_display_mode(i.user.id,"mobile")
                 if destination=="city":
-                    await i.response.edit_message(view=MobileCityView(),attachments=[])
+                    await i.response.edit_message(view=MobileCityView(i.user.id),attachments=[])
                     return
                 if destination=="khaz":
                     level=CASTLE_STORE.current_level(i.user.id)
@@ -682,9 +687,11 @@ class MobileWorldView(discord.ui.LayoutView):
         self.add_item(panel)
 
 class MobileCityView(discord.ui.LayoutView):
-    def __init__(self):
+    def __init__(self, owner_id: int | None = None):
         super().__init__(timeout=1800)
-        panel=v2_container(v2_header("🏰 ALTHÉRYA — CITÉ ROYALE", "Choisis un lieu et poursuis ton aventure."),v2_separator(True),colour=0xB67A2A)
+        self.owner_id = int(owner_id) if owner_id is not None else None
+        status = (f"🧙 **Niveau {CASTLE_STORE.current_level(self.owner_id)}**  •  💰 **{ECONOMY.get_balance(self.owner_id).wallet:,} Gold**" if self.owner_id is not None else "Choisis un lieu.")
+        panel=v2_container(v2_header("🏰 ALTHÉRYA — CITÉ ROYALE", "Ton aventure, en un coup d’œil."),discord.ui.TextDisplay(status),v2_separator(True),colour=0xB67A2A)
         descriptions={"market":"Achète, vends et équipe ton aventurier.","tavern":"Bois, joue, défie tes amis et écoute le Troubadour.","bank":"Protège tes Gold et consulte ton coffre.","forge":"Améliore ton équipement et renforce tes outils.","arena":"Affronte le Champion ou un autre joueur.","expeditions":"Petits boulots, contrats et récompenses du royaume.","alley":"Marché clandestin, risques et affaires douteuses.","castle":"Quêtes, progression et institutions du royaume."}
         items=list(DESTINATIONS.items())
         for idx,(key,data) in enumerate(items):
@@ -696,7 +703,7 @@ class MobileCityView(discord.ui.LayoutView):
             panel.add_item(discord.ui.Section(f"### {data['emoji']} {data['label']}\n{descriptions.get(key,'Explore ce lieu.')}",accessory=b))
             if idx != len(items)-1: panel.add_item(v2_separator())
         world=discord.ui.Button(label="Monde d'Elyndor",emoji="🌍",style=discord.ButtonStyle.primary,custom_id="altherya:mobile:city:world")
-        async def world_cb(i): await i.response.edit_message(attachments=[],view=MobileWorldView())
+        async def world_cb(i): await i.response.edit_message(attachments=[],view=MobileWorldView(i.user.id))
         world.callback=world_cb
         panel.add_item(v2_separator(True)); panel.add_item(discord.ui.Section("### 🌍 Quitter la cité\nRetourne à la carte du monde d'Elyndor.",accessory=world))
         self.add_item(panel)
@@ -713,7 +720,7 @@ class DisplayModeSelectView(discord.ui.LayoutView):
             await i.response.send_message(file=file,view=WorldHubV2(private_session=True),ephemeral=True)
         async def mobile_cb(i):
             _set_display_mode(i.user.id,"mobile")
-            await i.response.send_message(view=MobileWorldView(),ephemeral=True)
+            await i.response.send_message(view=MobileWorldView(i.user.id),ephemeral=True)
         pc.callback=pc_cb; mobile.callback=mobile_cb
         panel=v2_container(
             v2_header("👑 ALTHERYA — ROYAUME DE IV", "Choisis l'interface adaptée à ton appareil."),
@@ -3448,7 +3455,7 @@ class ExplorationLocationView(discord.ui.View):
                 await interaction.response.send_message("Cette interface appartient à un autre joueur.", ephemeral=True)
                 return
             if _is_mobile(interaction.user.id):
-                await interaction.response.edit_message(content=None, attachments=[], view=MobileWorldView())
+                await interaction.response.edit_message(content=None, attachments=[], view=MobileWorldView(interaction.user.id))
             else:
                 file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
                 await interaction.response.edit_message(content=None, attachments=[file], view=WorldHubV2(private_session=True))
@@ -5140,12 +5147,12 @@ def _podium_text(top3):
     def gold(v):
         # Format court pour préserver la géométrie du podium.
         if v >= 1_000_000_000:
-            return f"{v/1_000_000_000:.1f}Md G".replace(".0", "")
+            return f"{v/1_000_000_000:.1f}Md Gold".replace(".0", "")
         if v >= 1_000_000:
-            return f"{v/1_000_000:.1f}M G".replace(".0", "")
+            return f"{v/1_000_000:.1f}M Gold".replace(".0", "")
         if v >= 1_000:
-            return f"{v/1_000:.1f}k G".replace(".0", "")
-        return f"{v} G"
+            return f"{v/1_000:.1f}k Gold".replace(".0", "")
+        return f"{v} Gold"
 
     lines = [
         "```",
@@ -5362,11 +5369,16 @@ def _v2_action_description(button: discord.ui.Button) -> str:
         (("inventaire", "équipement", "profil", "fiche"), "Consulte tes possessions, tes statistiques et ta progression."),
         (("récompense", "claim", "récupérer"), "Récupère la récompense disponible pour ton aventurier."),
         (("confirmer", "valider", "continuer"), "Confirme ton choix et poursuis l’aventure."),
+        (("actualiser", "refresh"), "Actualise les informations de cet écran."),
+        (("lancer", "démarrer", "start"), "Lance l’action avec les choix affichés."),
+        (("monde", "world"), "Retourne directement à la carte d’Elyndor."),
+        (("classe", "class"), "Choisis ta classe et prépare tes compétences."),
+        (("entrer", "étage", "floor"), "Entre dans l’étage et commence l’affrontement."),
     ]
     for needles, desc in rules:
         if any(n in key for n in needles):
             return desc
-    return "Interagis avec ce lieu pour poursuivre ton aventure."
+    return "Utilise cette action pour continuer sur cet écran."
 
 def _legacy_view_to_v2(view: discord.ui.View, *, content: str | None = None, filename: str | None = None, title: str | None = None, accent: int = 0xB67A2A) -> discord.ui.LayoutView:
     """Convertit une ancienne vue en écran RPG Components V2 à cartes d'action.
@@ -5661,9 +5673,9 @@ async def return_to_hub(interaction: discord.Interaction):
     try:
         if _is_mobile(interaction.user.id):
             if not interaction.response.is_done():
-                await interaction.response.edit_message(content=None,attachments=[],view=MobileCityView())
+                await interaction.response.edit_message(content=None,attachments=[],view=MobileCityView(interaction.user.id))
             else:
-                await interaction.edit_original_response(content=None,attachments=[],view=MobileCityView())
+                await interaction.edit_original_response(content=None,attachments=[],view=MobileCityView(interaction.user.id))
             return
         file=discord.File(PLACES / "hub.png",filename="altherya_city.png")
         if not interaction.response.is_done():
@@ -5723,7 +5735,16 @@ def _native_admin_ok(interaction: discord.Interaction) -> bool:
 def _admin_ok(interaction: discord.Interaction) -> bool:
     if _native_admin_ok(interaction):
         return True
-    return bool(interaction.guild and ADMIN_STORE.has_admin_access(interaction.guild.id, interaction.user.id))
+    if not interaction.guild or not isinstance(interaction.user, discord.Member):
+        return False
+    if ADMIN_STORE.has_admin_access(interaction.guild.id, interaction.user.id):
+        return True
+    try:
+        cfg=json.loads((DATA / "admin_roles.json").read_text(encoding="utf-8"))
+        allowed={int(x) for x in cfg.get(str(interaction.guild.id),[])}
+        return any(int(r.id) in allowed for r in interaction.user.roles)
+    except Exception:
+        return False
 
 async def _admin_guard(interaction: discord.Interaction) -> bool:
     if _admin_ok(interaction):
@@ -6356,38 +6377,329 @@ async def profil(interaction: discord.Interaction, joueur: discord.Member | None
     embed = _player_profile_embed(member)
     await interaction.followup.send(embed=embed, ephemeral=False)
 
+# ========================= V2.45 — PANEL ADMIN FIXE =========================
+ADMIN_PANEL_FILE = DATA / "admin_panel.json"
+
+def _admin_panel_save(guild_id:int, channel_id:int, message_id:int):
+    ADMIN_PANEL_FILE.write_text(json.dumps({"guild_id":int(guild_id),"channel_id":int(channel_id),"message_id":int(message_id)},ensure_ascii=False,indent=2),encoding="utf-8")
+
+def _admin_panel_load():
+    try: return json.loads(ADMIN_PANEL_FILE.read_text(encoding="utf-8"))
+    except Exception: return {}
+
+def admin_v244_embed():
+    e=discord.Embed(title="🛡️ ADMINISTRATION — ALTHÉRYA",description="Centre de gestion administrateur.\n\nChoisis une catégorie ci-dessous.",color=discord.Color.dark_gold())
+    e.add_field(name="👤 Joueurs",value="Progression • Gold • inventaire • réputations",inline=True)
+    e.add_field(name="🏰 Althérya",value="Ashkar • annonces • événements • activités",inline=True)
+    e.add_field(name="⚙️ Admin",value="Panel • accès • logs",inline=True)
+    e.add_field(name="🛡️ Discord",value="Modération • salons • rôles",inline=True)
+    e.set_footer(text="Althérya • Administration")
+    return e
+
+class V244NumberModal(discord.ui.Modal):
+    def __init__(self, target_id:int, kind:str):
+        titles={'xp':'Modifier XP','level':'Fixer le niveau','ashkar':'Étage d’Ashkar','rep_tavern':'Palier Taverne','rep_alley':'Palier Ruelle','rep_arena':'Palier Arène','rep_champion':'Palier Champion','rep_casino':'Palier Casino'}
+        super().__init__(title=titles.get(kind,'Modification')); self.target_id=int(target_id); self.kind=kind
+        self.value=discord.ui.TextInput(label="Valeur",placeholder="Nombre",max_length=10); self.add_item(self.value)
+    async def on_submit(self,i):
+        if not await _admin_guard(i): return
+        try: v=int(str(self.value.value).strip())
+        except ValueError: return await i.response.send_message("❌ Valeur invalide.",ephemeral=True)
+        uid=self.target_id
+        try:
+            with ADMIN_STORE._c() as c:
+                if self.kind=='xp':
+                    c.execute('INSERT OR IGNORE INTO castle_profiles(user_id) VALUES(?)',(uid,)); old=int(c.execute('SELECT xp FROM castle_profiles WHERE user_id=?',(uid,)).fetchone()['xp']); new=max(0,old+v); c.execute('UPDATE castle_profiles SET xp=? WHERE user_id=?',(new,uid)); msg=f'XP {old} → {new}'
+                elif self.kind=='level':
+                    v=max(1,v); old=level_from_xp(int(c.execute('SELECT COALESCE(xp,0) xp FROM castle_profiles WHERE user_id=?',(uid,)).fetchone()['xp']) if c.execute('SELECT 1 FROM castle_profiles WHERE user_id=?',(uid,)).fetchone() else 0)[0]; newxp=ADMIN_STORE._xp_floor(v); c.execute('INSERT OR IGNORE INTO castle_profiles(user_id,xp) VALUES(?,?)',(uid,newxp)); c.execute('UPDATE castle_profiles SET xp=? WHERE user_id=?',(newxp,uid)); c.execute('INSERT OR IGNORE INTO expedition_profiles(user_id) VALUES(?)',(uid,)); c.execute('UPDATE expedition_profiles SET player_level=? WHERE user_id=?',(v,uid)); msg=f'Niveau {old} → {v}'
+                elif self.kind=='ashkar':
+                    v=max(0,min(10,v)); c.execute('INSERT OR IGNORE INTO ashkar_progress(user_id,max_floor) VALUES(?,0)',(uid,)); old=int(c.execute('SELECT max_floor FROM ashkar_progress WHERE user_id=?',(uid,)).fetchone()['max_floor']); c.execute('UPDATE ashkar_progress SET max_floor=? WHERE user_id=?',(v,uid)); msg=f'Ashkar {old} → {v}'
+                else:
+                    maps={'rep_tavern':('tavern_reputation','drinks',[0,5,25,75,150,300],5),'rep_alley':('criminal_reputation','successes',[0,5,20,60,150,300],5),'rep_arena':('arena_progress','rating',[0,500,1200,2200,3500,5000],5),'rep_champion':('arena_progress','champion_wins',list(range(0,11)),10),'rep_casino':('casino_loyalty_admin','wins',[0,30,200],2)}
+                    table,col,vals,mx=maps[self.kind]; v=max(0,min(mx,v)); val=vals[v]
+                    if table=='arena_progress': c.execute('INSERT OR IGNORE INTO arena_progress(user_id,rating,champion_wins) VALUES(?,0,0)',(uid,))
+                    elif table=='tavern_reputation': c.execute('INSERT OR IGNORE INTO tavern_reputation(user_id,drinks) VALUES(?,0)',(uid,))
+                    elif table=='criminal_reputation': c.execute('INSERT OR IGNORE INTO criminal_reputation(user_id,successes) VALUES(?,0)',(uid,))
+                    else: c.execute('CREATE TABLE IF NOT EXISTS casino_loyalty_admin(user_id INTEGER PRIMARY KEY,wins INTEGER NOT NULL DEFAULT 0)'); c.execute('INSERT OR IGNORE INTO casino_loyalty_admin(user_id,wins) VALUES(?,0)',(uid,))
+                    c.execute(f'UPDATE {table} SET {col}=? WHERE user_id=?',(val,uid)); msg=f'Palier fixé à {v}'
+                c.commit()
+            ADMIN_STORE.log(i.user.id,uid,self.kind,msg)
+            await i.response.send_message(f"✅ {msg}",ephemeral=True)
+        except Exception as e: await i.response.send_message(f"❌ {type(e).__name__}: {e}",ephemeral=True)
+
+class V244RepView(discord.ui.View):
+    def __init__(self,uid:int):
+        super().__init__(timeout=300); self.uid=int(uid)
+        for kind,label,emoji in [('rep_tavern','Taverne','🍺'),('rep_alley','Ruelle','🌑'),('rep_arena','Arène','⚔️'),('rep_champion','Champion','🏆'),('rep_casino','Casino','🎰')]:
+            b=discord.ui.Button(label=label,emoji=emoji,style=discord.ButtonStyle.secondary,custom_id=f'v244:{kind}')
+            async def cb(i,k=kind):
+                if await _admin_guard(i): await i.response.send_modal(V244NumberModal(self.uid,k))
+            b.callback=cb; self.add_item(b)
+
+class V244ResetView(discord.ui.View):
+    def __init__(self,uid:int):
+        super().__init__(timeout=300); self.uid=int(uid)
+        for key,label in [('cooldowns','Cooldowns'),('inventory','Inventaire'),('reputations','Réputations'),('progression','Progression'),('all','RESET COMPLET')]:
+            b=discord.ui.Button(label=label,style=discord.ButtonStyle.danger if key=='all' else discord.ButtonStyle.secondary)
+            async def cb(i,k=key):
+                if not await _admin_guard(i): return
+                with ADMIN_STORE._c() as c:
+                    if k in ('cooldowns','all'): ADMIN_STORE.reset_cooldowns(self.uid)
+                    if k in ('inventory','all'): c.execute('DELETE FROM resources WHERE user_id=?',(self.uid,))
+                    if k in ('reputations','all'):
+                        for t in ('tavern_reputation','criminal_reputation','casino_loyalty_admin'):
+                            try: c.execute(f'DELETE FROM {t} WHERE user_id=?',(self.uid,))
+                            except Exception: pass
+                        try: c.execute('UPDATE arena_progress SET rating=0,champion_wins=0 WHERE user_id=?',(self.uid,))
+                        except Exception: pass
+                    if k in ('progression','all'):
+                        c.execute('UPDATE castle_profiles SET xp=0 WHERE user_id=?',(self.uid,)); c.execute('UPDATE expedition_profiles SET player_level=1 WHERE user_id=?',(self.uid,));
+                        try: c.execute('DELETE FROM ashkar_progress WHERE user_id=?',(self.uid,))
+                        except Exception: pass
+                    c.commit()
+                ADMIN_STORE.log(i.user.id,self.uid,'reset_'+k)
+                await i.response.send_message(f'✅ Reset **{label}** effectué.',ephemeral=True)
+            b.callback=cb; self.add_item(b)
+
+class V244PlayerActions(discord.ui.View):
+    def __init__(self,uid:int):
+        super().__init__(timeout=600); self.uid=int(uid)
+        specs=[('gold','Gold','💰'),('xp','XP','⭐'),('level','Niveau','🎚️'),('items','Inventaire','🎒'),('gear','Équipement','⚔️'),('rep','Réputations','🏅'),('cd','Cooldowns','⏱️'),('reset','Reset','🔄')]
+        for key,label,emoji in specs:
+            b=discord.ui.Button(label=label,emoji=emoji,style=discord.ButtonStyle.secondary)
+            async def cb(i,k=key):
+                if not await _admin_guard(i): return
+                if k=='gold': return await i.response.edit_message(content='💰 Ajouter ou retirer des Gold.',view=AdminMoneyView(self.uid))
+                if k=='xp': return await i.response.send_modal(V244NumberModal(self.uid,'xp'))
+                if k=='level': return await i.response.send_modal(V244NumberModal(self.uid,'level'))
+                if k in ('items','gear'): return await i.response.edit_message(content='🎒 Inventaire / équipement.',view=AdminItemView(self.uid))
+                if k=='rep': return await i.response.edit_message(content='🏅 Choisis la réputation puis fixe directement son palier.',view=V244RepView(self.uid))
+                if k=='cd':
+                    r=ADMIN_STORE.reset_cooldowns(self.uid); ADMIN_STORE.log(i.user.id,self.uid,'reset_cooldowns',str(r)); return await i.response.send_message('✅ Cooldowns réinitialisés.',ephemeral=True)
+                return await i.response.edit_message(content='⚠️ Choisis précisément ce que tu veux réinitialiser.',view=V244ResetView(self.uid))
+            b.callback=cb; self.add_item(b)
+
+class V244PlayerSelect(discord.ui.UserSelect):
+    def __init__(self,mode='player'): super().__init__(placeholder='Sélectionner un joueur…',min_values=1,max_values=1); self.mode=mode
+    async def callback(self,i):
+        if not await _admin_guard(i): return
+        m=self.values[0]
+        if self.mode=='ashkar': return await i.response.send_modal(V244NumberModal(m.id,'ashkar'))
+        if self.mode=='discord': return await i.response.edit_message(content=f'🛡️ Modération de {m.mention}',view=V244DiscordMemberView(m.id))
+        await i.response.edit_message(content=f'👤 Administration de {m.mention}',view=V244PlayerActions(m.id))
+class V244Pick(discord.ui.View):
+    def __init__(self,mode='player'): super().__init__(timeout=300); self.add_item(V244PlayerSelect(mode))
+
+class V244GlobalRewardModal(discord.ui.Modal):
+    def __init__(self): super().__init__(title='Récompense globale'); self.gold=discord.ui.TextInput(label='Gold par joueur',placeholder='500',max_length=10); self.add_item(self.gold)
+    async def on_submit(self,i):
+        if not await _admin_guard(i): return
+        try: amount=max(0,int(self.gold.value))
+        except: return await i.response.send_message('❌ Montant invalide.',ephemeral=True)
+        with ADMIN_STORE._c() as c: ids=[int(r[0]) for r in c.execute('SELECT user_id FROM players').fetchall()]
+        for uid in ids: ADMIN_STORE.adjust_gold(uid,amount)
+        ADMIN_STORE.log(i.user.id,None,'global_reward',f'{amount} Gold x {len(ids)} joueurs')
+        await i.response.send_message(f'✅ **{amount} Gold** donnés à **{len(ids)} joueurs**.',ephemeral=True)
+
+class V244AnnouncementModal(discord.ui.Modal):
+    def __init__(self): super().__init__(title='Gazette / annonce'); self.text=discord.ui.TextInput(label='Message',style=discord.TextStyle.paragraph,max_length=1800); self.add_item(self.text)
+    async def on_submit(self,i):
+        if not await _admin_guard(i): return
+        await i.channel.send(embed=discord.Embed(title='📰 Gazette d’Althérya',description=self.text.value,color=discord.Color.dark_gold()))
+        ADMIN_STORE.log(i.user.id,None,'announcement',self.text.value[:250]); await i.response.send_message('✅ Annonce publiée.',ephemeral=True)
+
+class V244UnblockSelect(discord.ui.UserSelect):
+    def __init__(self): super().__init__(placeholder="Sélectionner le joueur à débloquer…",min_values=1,max_values=1)
+    async def callback(self,i):
+        if not await _admin_guard(i): return
+        uid=int(self.values[0].id); r=ADMIN_STORE.reset_cooldowns(uid)
+        with ADMIN_STORE._c() as c:
+            try: c.execute("UPDATE expedition_runs SET claimed=1 WHERE user_id=? AND claimed=0",(uid,))
+            except Exception: pass
+            try: c.execute("UPDATE job_board_state SET pending_job_json='', reward_ready_at=0, jobs_json='[]', next_board_at=0 WHERE user_id=?",(uid,))
+            except Exception: pass
+            try: c.execute("DELETE FROM ashkar_daily WHERE user_id=?",(uid,))
+            except Exception: pass
+            c.commit()
+        ADMIN_STORE.log(i.user.id,uid,'unblock_activity',str(r)); await i.response.send_message(f"✅ Activités temporaires débloquées pour {self.values[0].mention}.",ephemeral=True)
+class V244UnblockPick(discord.ui.View):
+    def __init__(self): super().__init__(timeout=180); self.add_item(V244UnblockSelect())
+
+class V244AltheryaView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=600)
+        specs=[('ashkar','Ashkar','🗼'),('jobs','Petites annonces','📜'),('reward','Récompense globale','🎁'),('zones','Zones','🔒'),('events','Événements','🎉'),('news','Gazette / annonce','📰'),('unblock','Débloquer activité','🛠️')]
+        for k,l,e in specs:
+            b=discord.ui.Button(label=l,emoji=e,style=discord.ButtonStyle.secondary)
+            async def cb(i,key=k):
+                if not await _admin_guard(i): return
+                if key=='ashkar': return await i.response.edit_message(content='🗼 Sélectionne le joueur.',view=V244Pick('ashkar'))
+                if key=='jobs':
+                    with ADMIN_STORE._c() as c: c.execute("UPDATE job_board_state SET jobs_json='[]', next_board_at=0 WHERE pending_job_json='' OR pending_job_json IS NULL"); n=c.total_changes; c.commit()
+                    ADMIN_STORE.log(i.user.id,None,'regenerate_job_board',str(n)); return await i.response.send_message(f'✅ Petites annonces régénérées pour **{n}** profils libres.',ephemeral=True)
+                if key=='reward': return await i.response.send_modal(V244GlobalRewardModal())
+                if key=='events': return await i.response.edit_message(content='🎉 Active/désactive les événements Althérya.',view=AdminEventsView())
+                if key=='news': return await i.response.send_modal(V244AnnouncementModal())
+                if key=='unblock': return await i.response.edit_message(content='🛠️ Sélectionne le joueur à débloquer.',view=V244UnblockPick())
+                return await i.response.edit_message(content='🔒 Gestion des zones : cette commande sera branchée sur les verrous monde existants.',view=V244ZoneView())
+            b.callback=cb; self.add_item(b)
+
+class V244ZoneView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        for key,label in [('altherya','Althérya'),('elarwyn','Elarwyn'),('vorak','Vorak'),('khaz_goram','KHAZ’GORAM'),('ashkar','Ashkar')]:
+            b=discord.ui.Button(label=label,style=discord.ButtonStyle.secondary)
+            async def cb(i,k=key,l=label):
+                if not await _admin_guard(i): return
+                state=not ADMIN_STORE.event_enabled('zone_closed:'+k); ADMIN_STORE.set_event('zone_closed:'+k,state,i.user.id)
+                await i.response.send_message(f"{'🔒 Fermée' if state else '🔓 Ouverte'} : **{l}**.",ephemeral=True)
+            b.callback=cb; self.add_item(b)
+
+class V244WarnModal(discord.ui.Modal):
+    def __init__(self,uid): super().__init__(title='Avertissement'); self.uid=uid; self.reason=discord.ui.TextInput(label='Raison',required=False,max_length=300); self.add_item(self.reason)
+    async def on_submit(self,i):
+        m=await _get_member(i,self.uid); reason=self.reason.value or 'Aucune raison indiquée'; ADMIN_STORE.log(i.user.id,self.uid,'warning',reason)
+        try: await m.send(f'⚠️ **Avertissement — {i.guild.name}**\n{reason}')
+        except: pass
+        await i.response.send_message(f'✅ Avertissement enregistré pour {m.mention}.',ephemeral=True)
+
+class V244RoleSelect(discord.ui.RoleSelect):
+    def __init__(self,uid,mode): super().__init__(placeholder='Choisir un rôle…',min_values=1,max_values=1); self.uid=uid; self.mode=mode
+    async def callback(self,i):
+        m=await _get_member(i,self.uid); role=self.values[0]
+        try:
+            if self.mode=='add': await m.add_roles(role,reason=f'Admin Altherya par {i.user}')
+            else: await m.remove_roles(role,reason=f'Admin Altherya par {i.user}')
+            ADMIN_STORE.log(i.user.id,self.uid,'role_'+self.mode,role.name); await i.response.send_message(f'✅ Rôle **{role.name}** modifié.',ephemeral=True)
+        except Exception as e: await i.response.send_message(f'❌ {e}',ephemeral=True)
+class V244RoleView(discord.ui.View):
+    def __init__(self,uid,mode): super().__init__(timeout=180); self.add_item(V244RoleSelect(uid,mode))
+
+class V244DiscordMemberView(AdminModerationView):
+    def __init__(self,uid):
+        super().__init__(uid)
+        warn=discord.ui.Button(label='Avertissement',emoji='⚠️',style=discord.ButtonStyle.secondary,row=1); add=discord.ui.Button(label='Ajouter rôle',style=discord.ButtonStyle.secondary,row=1); rem=discord.ui.Button(label='Retirer rôle',style=discord.ButtonStyle.secondary,row=1)
+        warn.callback=lambda i: i.response.send_modal(V244WarnModal(uid)); add.callback=lambda i: i.response.edit_message(content='👤 Choisis le rôle à ajouter.',view=V244RoleView(uid,'add')); rem.callback=lambda i: i.response.edit_message(content='👤 Choisis le rôle à retirer.',view=V244RoleView(uid,'remove'))
+        self.add_item(warn); self.add_item(add); self.add_item(rem)
+
+class V244ClearModal(discord.ui.Modal):
+    def __init__(self): super().__init__(title='Clear messages'); self.amount=discord.ui.TextInput(label='Nombre de messages',placeholder='20',max_length=3); self.add_item(self.amount)
+    async def on_submit(self,i):
+        try: n=max(1,min(100,int(self.amount.value)))
+        except: return await i.response.send_message('❌ Nombre invalide.',ephemeral=True)
+        await i.response.defer(ephemeral=True); deleted=await i.channel.purge(limit=n); ADMIN_STORE.log(i.user.id,None,'clear_messages',f'{len(deleted)} channel={i.channel.id}'); await i.followup.send(f'🧹 **{len(deleted)}** messages supprimés.',ephemeral=True)
+
+class V244UnbanModal(discord.ui.Modal):
+    def __init__(self): super().__init__(title="Unban"); self.uid=discord.ui.TextInput(label="ID Discord du membre",max_length=22); self.add_item(self.uid)
+    async def on_submit(self,i):
+        if not await _admin_guard(i): return
+        try: uid=int(self.uid.value); user=await bot.fetch_user(uid); await i.guild.unban(user,reason=f"Admin Altherya par {i.user}"); ADMIN_STORE.log(i.user.id,uid,'unban'); await i.response.send_message(f"✅ **{user}** débanni.",ephemeral=True)
+        except Exception as e: await i.response.send_message(f"❌ Unban impossible : {e}",ephemeral=True)
+
+class V244DiscordView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=600)
+        member=discord.ui.Button(label='Gérer un membre',emoji='👤'); unban=discord.ui.Button(label='Unban',emoji='🔨'); clear=discord.ui.Button(label='Clear messages',emoji='🧹'); lock=discord.ui.Button(label='Lock / Unlock',emoji='🔒')
+        member.callback=lambda i: i.response.edit_message(content='🛡️ Sélectionne un membre.',view=V244Pick('discord')); unban.callback=lambda i: i.response.send_modal(V244UnbanModal()); clear.callback=lambda i: i.response.send_modal(V244ClearModal())
+        async def lockcb(i):
+            if not await _admin_guard(i): return
+            ow=i.channel.overwrites_for(i.guild.default_role); locked=ow.send_messages is False; ow.send_messages=True if locked else False; await i.channel.set_permissions(i.guild.default_role,overwrite=ow,reason=f'Admin Altherya par {i.user}'); ADMIN_STORE.log(i.user.id,None,'unlock' if locked else 'lock',str(i.channel.id)); await i.response.send_message('🔓 Salon déverrouillé.' if locked else '🔒 Salon verrouillé.',ephemeral=True)
+        lock.callback=lockcb
+        for b in (member,unban,clear,lock): self.add_item(b)
+
+class V244AdminAccessView(AdminAccessView): pass
+
+class V244LogsView(discord.ui.View):
+    def __init__(self): super().__init__(timeout=180)
+
+async def _v244_logs(i):
+    with ADMIN_STORE._c() as c: rows=c.execute('SELECT admin_id,target_id,action,details,created_at FROM admin_audit ORDER BY id DESC LIMIT 15').fetchall()
+    txt='\n'.join(f"`{r['created_at']}` <@{r['admin_id']}> • **{r['action']}**"+(f" → <@{r['target_id']}>" if r['target_id'] else '') for r in rows) or 'Aucune action.'
+    await i.response.edit_message(content='📋 **Dernières actions admin**\n'+txt[:1900],view=V244LogsView())
+
+class AdminHubV244(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        for key,label,emoji in [('players','Joueurs','👤'),('altherya','Althérya','🏰'),('admin','Admin','⚙️'),('discord','Discord','🛡️')]:
+            b=discord.ui.Button(label=label,emoji=emoji,style=discord.ButtonStyle.secondary,custom_id='altherya:admin:'+key)
+            async def cb(i,k=key):
+                if not await _admin_guard(i): return
+                if k=='players': return await i.response.send_message('👤 **JOUEURS**\nSélectionne un joueur.',view=V244Pick(),ephemeral=True)
+                if k=='altherya': return await i.response.send_message('🏰 **ALTHÉRYA**',view=V244AltheryaView(),ephemeral=True)
+                if k=='discord': return await i.response.send_message('🛡️ **DISCORD**',view=V244DiscordView(),ephemeral=True)
+                return await i.response.send_message('⚙️ **ADMIN**',view=V244AdminToolsView(),ephemeral=True)
+            b.callback=cb; self.add_item(b)
+
+class V244AuthorizedRoleSelect(discord.ui.RoleSelect):
+    def __init__(self): super().__init__(placeholder="Choisir un rôle à autoriser / retirer…",min_values=1,max_values=1)
+    async def callback(self,i):
+        if not _native_admin_ok(i): return await i.response.send_message("❌ Administrateur Discord requis.",ephemeral=True)
+        role=self.values[0]; path=DATA / "admin_roles.json"
+        try: cfg=json.loads(path.read_text(encoding="utf-8"))
+        except Exception: cfg={}
+        key=str(i.guild.id); ids={int(x) for x in cfg.get(key,[])}
+        if role.id in ids: ids.remove(role.id); action="retiré des"
+        else: ids.add(role.id); action="ajouté aux"
+        cfg[key]=sorted(ids); path.write_text(json.dumps(cfg,ensure_ascii=False,indent=2),encoding="utf-8")
+        ADMIN_STORE.log(i.user.id,None,'admin_role_toggle',f'{role.id} {role.name}')
+        await i.response.send_message(f"✅ {role.mention} {action} rôles autorisés.",ephemeral=True)
+class V244AuthorizedRoleView(discord.ui.View):
+    def __init__(self): super().__init__(timeout=180); self.add_item(V244AuthorizedRoleSelect())
+
+class V244AdminToolsView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=600)
+        access=discord.ui.Button(label='Rôles autorisés',emoji='👮'); logs=discord.ui.Button(label='Logs admin',emoji='📋'); refresh=discord.ui.Button(label='Actualiser panel',emoji='🔄')
+        access.callback=lambda i: i.response.edit_message(content='👮 **Rôles Discord autorisés à utiliser le panel**\nSélectionner un rôle l’ajoute ; le sélectionner de nouveau le retire.',view=V244AuthorizedRoleView())
+        logs.callback=_v244_logs
+        async def r(i):
+            d=_admin_panel_load(); ch=i.guild.get_channel(int(d.get('channel_id',0))) if d else None
+            try: msg=await ch.fetch_message(int(d.get('message_id',0))); await msg.edit(embed=admin_v244_embed(),view=AdminHubV244()); await i.response.send_message('✅ Panel actualisé.',ephemeral=True)
+            except Exception as e: await i.response.send_message(f'❌ {e}',ephemeral=True)
+        refresh.callback=r
+        for b in (access,logs,refresh): self.add_item(b)
+
+async def _install_admin_panel(interaction):
+    if not _native_admin_ok(interaction): return await interaction.followup.send('❌ Administrateur Discord requis.',ephemeral=True)
+    old=_admin_panel_load()
+    if old:
+        try:
+            ch=interaction.guild.get_channel(int(old.get('channel_id',0))); msg=await ch.fetch_message(int(old.get('message_id',0))); await msg.delete()
+        except: pass
+    msg=await interaction.channel.send(embed=admin_v244_embed(),view=AdminHubV244())
+    try: await msg.pin(reason=f'Panel Admin Altherya installé par {interaction.user}')
+    except: pass
+    _admin_panel_save(interaction.guild.id,interaction.channel.id,msg.id); ADMIN_STORE.log(interaction.user.id,None,'admin_panel_install',f'channel={interaction.channel.id} message={msg.id}')
+    await interaction.followup.send(f'✅ Panel Admin installé et fixé dans {interaction.channel.mention}.',ephemeral=True)
+# ======================= FIN V2.45 PANEL ADMIN =======================
+
 @bot.tree.command(name="admin", description="Ouvre le panneau d'administration de Altherya")
 async def admin(interaction: discord.Interaction):
-    # V1.67.2 — ACK immédiat : évite les 10062/40060 si SQLite ou Discord prend > 3 s.
     if interaction.guild is None:
-        await interaction.response.send_message("❌ Cette commande doit être utilisée dans un serveur.", ephemeral=True)
-        return
-
-    await interaction.response.defer(ephemeral=True, thinking=True)
-
-    # IMPORTANT : aucun has_permissions(administrator=True) Discord ici.
-    # L'accès est décidé par _admin_ok : administrateur Discord OU joueur délégué.
+        return await interaction.response.send_message("❌ Serveur uniquement.",ephemeral=True)
+    await interaction.response.defer(ephemeral=True,thinking=True)
     if not _admin_ok(interaction):
-        await interaction.followup.send("❌ Ce panneau est réservé aux **administrateurs autorisés**.", ephemeral=True)
-        return
+        return await interaction.followup.send("❌ Accès refusé.",ephemeral=True)
+    await interaction.followup.send(embed=admin_v244_embed(),view=AdminHubV244(),ephemeral=True)
 
-    await interaction.followup.send(embed=admin_home_embed(), view=AdminPanelView(), ephemeral=True)
+@bot.tree.command(name="admin_setup",description="Installe et fixe le panel Admin dans ce salon")
+async def admin_setup(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True,thinking=True)
+    await _install_admin_panel(interaction)
 
-@admin.error
-async def admin_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    # Réponse sûre : ne jamais acquitter deux fois la même interaction.
-    msg = "❌ Impossible d'ouvrir `/admin`."
-    if isinstance(error, app_commands.CheckFailure):
-        msg = "❌ Ce panneau est réservé aux **administrateurs autorisés**."
+@bot.tree.command(name="admin_move",description="Déplace le panel Admin dans ce salon")
+async def admin_move(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True,thinking=True)
+    await _install_admin_panel(interaction)
+
+@bot.tree.command(name="admin_refresh",description="Actualise le panel Admin fixe")
+async def admin_refresh(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True,thinking=True)
+    if not _admin_ok(interaction): return await interaction.followup.send("❌ Accès refusé.",ephemeral=True)
+    d=_admin_panel_load(); ch=interaction.guild.get_channel(int(d.get('channel_id',0))) if d else None
     try:
-        if interaction.response.is_done():
-            await interaction.followup.send(msg, ephemeral=True)
-        else:
-            await interaction.response.send_message(msg, ephemeral=True)
-    except (discord.NotFound, discord.HTTPException):
-        pass
-    if not isinstance(error, app_commands.CheckFailure):
-        raise error
+        msg=await ch.fetch_message(int(d.get('message_id',0))); await msg.edit(embed=admin_v244_embed(),view=AdminHubV244()); await interaction.followup.send("✅ Panel actualisé.",ephemeral=True)
+    except Exception as e: await interaction.followup.send(f"❌ {e}",ephemeral=True)
 
 @bot.tree.command(name="succes", description="Définit le salon public des succès et résultats de jeux de Altherya")
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -6729,10 +7041,15 @@ async def _altherya_setup_hook():
     le point prévu par discord.py pour cette initialisation.
     """
     global _COMMAND_TREE_SYNCED
+    SENTINEL.start()
+    bot.add_view(AdminHubV244())
     local_names = sorted(command.name for command in bot.tree.get_commands())
     print(f"[COMMANDES] Arbre local chargé ({len(local_names)}) : {', '.join(local_names)}")
-    if bot.tree.get_command("altherya") is None:
-        raise RuntimeError("Commande critique /altherya absente de l'arbre local avant synchronisation")
+    required_commands = {"altherya", "admin", "admin_setup", "admin_move", "admin_refresh"}
+    missing_commands = sorted(name for name in required_commands if bot.tree.get_command(name) is None)
+    if missing_commands:
+        raise RuntimeError("Commandes critiques absentes de l'arbre local avant synchronisation : " + ", ".join(missing_commands))
+    print("[V2.45] Panel Admin chargé : /admin, /admin_setup, /admin_move, /admin_refresh")
 
     try:
         if GUILD_ID:
@@ -6746,12 +7063,14 @@ async def _altherya_setup_hook():
         synced_names = sorted(command.name for command in synced)
         _COMMAND_TREE_SYNCED = True
         print(f"✅ Commandes {scope} synchronisées ({len(synced_names)}) : {', '.join(synced_names)}")
-        if "altherya" not in synced_names:
-            raise RuntimeError("Discord n'a pas retourné /altherya après la synchronisation")
-        print("✅ /altherya confirmée dans l'arbre Discord synchronisé")
+        missing_synced = sorted(required_commands.difference(synced_names))
+        if missing_synced:
+            raise RuntimeError("Discord n'a pas retourné les commandes critiques : " + ", ".join(missing_synced))
+        print("✅ /altherya et commandes Admin V2.45 confirmées dans l'arbre Discord synchronisé")
     except Exception as exc:
         _COMMAND_TREE_SYNCED = False
         print(f"❌ Synchronisation des commandes au démarrage : {type(exc).__name__}: {exc}")
+        await SENTINEL.report(exc, source="Démarrage", context="synchronisation commandes Discord")
         raise
 
 
@@ -6759,6 +7078,34 @@ async def _altherya_setup_hook():
 # traitement normal des interactions Gateway. Affectation volontaire à
 # l'instance afin de conserver l'architecture historique du projet.
 bot.setup_hook = _altherya_setup_hook
+
+
+# V2.43 — capture globale des erreurs Discord / commandes / Components V2.
+@bot.event
+async def on_error(event_method, *args, **kwargs):
+    exc = sys.exc_info()[1] or RuntimeError(f"Erreur événement Discord: {event_method}")
+    await SENTINEL.report(exc, source="Discord event", context=str(event_method))
+
+@bot.event
+async def on_command_error(ctx, error):
+    original = getattr(error, "original", error)
+    await SENTINEL.report(original, source="Commande texte", context=getattr(getattr(ctx, "command", None), "qualified_name", "commande"), user_id=getattr(getattr(ctx, "author", None), "id", None))
+
+@bot.tree.error
+async def _sentinel_app_command_error(interaction, error):
+    original = getattr(error, "original", error)
+    cmd = getattr(getattr(interaction, "command", None), "qualified_name", "interaction")
+    await SENTINEL.report(original, source="Commande / interaction", context=cmd, user_id=getattr(getattr(interaction, "user", None), "id", None))
+
+# discord.py route les erreurs de boutons vers View.on_error. On branche la
+# Sentinelle au niveau de la classe de base pour couvrir aussi les LayoutView V2.
+_SENTINEL_ORIGINAL_VIEW_ON_ERROR = discord.ui.View.on_error
+async def _sentinel_view_on_error(self, interaction, error, item):
+    original = getattr(error, "original", error)
+    custom_id = getattr(item, "custom_id", None) or getattr(item, "label", None) or type(item).__name__
+    await SENTINEL.report(original, source="Bouton / Components V2", context=str(custom_id), user_id=getattr(getattr(interaction, "user", None), "id", None))
+    # Ne pas rappeler le logger par défaut : le traceback est déjà journalisé par Sentinel.
+discord.ui.View.on_error = _sentinel_view_on_error
 
 
 @tasks.loop(seconds=3)
@@ -7041,7 +7388,7 @@ async def on_ready():
     # HubView = CityHubV2 (LayoutView) : construit à la demande, ne pas enregistrer via add_view().
     bot.add_view(TavernView())
     bot.add_view(TavernBarView())
-    bot.add_view(TavernDrinksView())
+    # V2.45 : vue temporaire (timeout=300), ne pas enregistrer comme vue persistante.
     bot.add_view(TavernGamesView())
     bot.add_view(TroubadourView())
     bot.add_view(MarketView())
