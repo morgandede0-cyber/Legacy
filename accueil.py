@@ -585,11 +585,97 @@ class FinalView(discord.ui.LayoutView):
         )
 
 
+class AdminUnregisterConfirmView(discord.ui.LayoutView):
+    """Confirmation admin avant suppression complète de l'onboarding d'un membre."""
+    def __init__(self, admin_id: int, member: discord.Member):
+        super().__init__(timeout=180)
+        self.admin_id = admin_id
+        self.member = member
+
+        cancel = discord.ui.Button(label="ANNULER", emoji="↩️", style=discord.ButtonStyle.secondary)
+        confirm = discord.ui.Button(label="DÉSINSCRIRE", emoji="🗑️", style=discord.ButtonStyle.danger)
+
+        async def cancel_cb(interaction: discord.Interaction):
+            if interaction.user.id != self.admin_id:
+                await interaction.response.send_message("⛔ Cette confirmation ne t'est pas destinée.", ephemeral=True)
+                return
+            closed = discord.ui.LayoutView(timeout=60)
+            closed.add_item(_container(discord.ui.TextDisplay("### ↩️ Désinscription annulée.")))
+            await interaction.response.edit_message(view=closed)
+
+        async def confirm_cb(interaction: discord.Interaction):
+            if interaction.user.id != self.admin_id:
+                await interaction.response.send_message("⛔ Cette confirmation ne t'est pas destinée.", ephemeral=True)
+                return
+            if interaction.guild is None:
+                await interaction.response.send_message("⚠️ Serveur introuvable.", ephemeral=True)
+                return
+
+            guild_id = interaction.guild.id
+            user_id = self.member.id
+            old = _state(guild_id, user_id)
+
+            # Suppression totale de l'inscription : le prochain COMMENCER repart de zéro.
+            DB.execute("DELETE FROM onboarding WHERE guild_id=? AND user_id=?", (guild_id, user_id))
+            DB.commit()
+
+            role_status = "Aucun rôle Membre configuré."
+            member_role_id = _env_id("MEMBER_ROLE_ID")
+            if member_role_id:
+                role = interaction.guild.get_role(member_role_id)
+                if role is None:
+                    role_status = "⚠️ Rôle Membre configuré introuvable."
+                elif role not in self.member.roles:
+                    role_status = "Le rôle Membre n'était pas attribué."
+                else:
+                    try:
+                        await self.member.remove_roles(role, reason=f"Désinscription Althérya par {interaction.user}")
+                        role_status = "✅ Rôle Membre retiré."
+                    except discord.Forbidden as exc:
+                        role_status = "⚠️ Inscription supprimée, mais rôle Membre impossible à retirer (hiérarchie/permissions)."
+                        print(f"[ACCUEIL ADMIN] remove role forbidden user={user_id}: {exc}")
+                    except discord.HTTPException as exc:
+                        role_status = "⚠️ Inscription supprimée, mais Discord a refusé le retrait du rôle."
+                        print(f"[ACCUEIL ADMIN] remove role HTTP user={user_id}: {exc}")
+
+            print(
+                f"[ACCUEIL ADMIN] desinscription guild={guild_id} user={user_id} "
+                f"admin={interaction.user.id} completed={old['completed']} nickname={old['nickname']!r}"
+            )
+            done = discord.ui.LayoutView(timeout=300)
+            done.add_item(
+                _container(
+                    discord.ui.TextDisplay(
+                        f"# 🗑️ JOUEUR DÉSINSCRIT\n"
+                        f"**{discord.utils.escape_markdown(self.member.display_name)}** (`{self.member.id}`) a été supprimé de l'accueil Althérya.\n\n"
+                        f"{role_status}\n\n"
+                        "🌍 Langue : réinitialisée\n"
+                        "📸 Identité OCR : réinitialisée\n"
+                        "📜 Règlement : réinitialisé\n"
+                        "🏰 Inscription : réinitialisée\n\n"
+                        "Le joueur peut maintenant cliquer sur **COMMENCER** et refaire l'inscription depuis le début."
+                    )
+                )
+            )
+            await interaction.response.edit_message(view=done)
+
+        cancel.callback = cancel_cb
+        confirm.callback = confirm_cb
+        self.add_item(
+            _container(
+                discord.ui.TextDisplay(
+                    f"# ⚠️ DÉSINSCRIRE UN JOUEUR\n"
+                    f"Tu vas réinitialiser complètement l'inscription de **{discord.utils.escape_markdown(member.display_name)}**.\n\n"
+                    "Ses données d'accueil seront supprimées et son rôle Membre sera retiré s'il est configuré."
+                ),
+                _sep(),
+                discord.ui.ActionRow(cancel, confirm),
+            )
+        )
+
+
 def register(bot) -> None:
     """Ajoute /setup_accueil à l'arbre du bot principal avant sa synchronisation."""
-    if bot.tree.get_command("setup_accueil") is not None:
-        return
-
     async def setup_accueil(interaction: discord.Interaction):
         # Vérification côté bot : compatible avec les versions discord.py où
         # app_commands.Command(...) n'accepte pas default_permissions=.
@@ -610,12 +696,36 @@ def register(bot) -> None:
         await interaction.channel.send(view=WelcomePublicView())
         await interaction.followup.send("✅ Panneau d’accueil installé dans ce salon.", ephemeral=True)
 
-    command = app_commands.Command(
-        name="setup_accueil",
-        description="Installe le panneau d'accueil Althérya dans ce salon",
-        callback=setup_accueil,
-    )
-    bot.tree.add_command(command)
+    if bot.tree.get_command("setup_accueil") is None:
+        command = app_commands.Command(
+            name="setup_accueil",
+            description="Installe le panneau d'accueil Althérya dans ce salon",
+            callback=setup_accueil,
+        )
+        bot.tree.add_command(command)
+
+    async def desinscrire(interaction: discord.Interaction, membre: discord.Member):
+        if interaction.guild is None:
+            await interaction.response.send_message("⚠️ Cette commande doit être utilisée dans un serveur.", ephemeral=True)
+            return
+        if not interaction.permissions.administrator:
+            await interaction.response.send_message("⛔ Cette commande est réservée aux administrateurs.", ephemeral=True)
+            return
+        if membre.bot:
+            await interaction.response.send_message("⚠️ Un bot ne possède pas d'inscription joueur Althérya.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            view=AdminUnregisterConfirmView(interaction.user.id, membre),
+            ephemeral=True,
+        )
+
+    if bot.tree.get_command("desinscrire") is None:
+        command = app_commands.Command(
+            name="desinscrire",
+            description="Réinitialise complètement l'inscription Althérya d'un joueur",
+            callback=desinscrire,
+        )
+        bot.tree.add_command(command)
 
 
 def register_persistent_views(bot) -> None:
