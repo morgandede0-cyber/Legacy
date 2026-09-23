@@ -205,20 +205,6 @@ def _ocr_nickname(image_bytes: bytes) -> tuple[str, float]:
     return name, confidence
 
 
-async def _find_latest_player_screen(interaction: discord.Interaction):
-    channel = interaction.channel
-    if channel is None or not hasattr(channel, "history"):
-        return None, None
-    async for message in channel.history(limit=35):
-        if message.author.id != interaction.user.id:
-            continue
-        for attachment in message.attachments:
-            ctype = (attachment.content_type or "").lower()
-            if ctype in ALLOWED_IMAGE_TYPES or attachment.filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
-                return message, attachment
-    return None, None
-
-
 class AdminCorrectionModal(discord.ui.Modal, title="Corriger l'identité"):
     nickname = discord.ui.TextInput(label="Pseudo exact", min_length=2, max_length=32, required=True)
 
@@ -364,55 +350,105 @@ class IdentityErrorView(discord.ui.LayoutView):
         ))
 
 
+class ScreenUploadModal(discord.ui.Modal, title="Identification Althérya"):
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=300)
+        self.guild_id = guild_id
+        self.user_id = user_id
+        self.upload = discord.ui.FileUpload(
+            custom_id="altherya_identity_screen",
+            required=True,
+            min_values=1,
+            max_values=1,
+        )
+        self.add_item(discord.ui.Label(
+            text="Capture Informations joueur",
+            description="Ajoute une capture complète de ton profil (PNG/JPG/WEBP).",
+            component=self.upload,
+        ))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("⛔ Cette identification ne t'appartient pas.", ephemeral=True)
+            return
+        attachments = self.upload.values
+        if not attachments:
+            await interaction.response.send_message("⚠️ Aucun screen reçu. Réessaie.", ephemeral=True)
+            return
+        attachment = attachments[0]
+        ctype = (attachment.content_type or "").lower()
+        if ctype not in ALLOWED_IMAGE_TYPES and not attachment.filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+            await _alert_admins(interaction, "Fichier non image envoyé dans l'identification")
+            await interaction.response.send_message("⚠️ Le fichier doit être une image PNG, JPG ou WEBP.", ephemeral=True)
+            return
+        try:
+            image_bytes = await attachment.read()
+            nickname, confidence = _ocr_nickname(image_bytes)
+        except Exception as exc:
+            await _alert_admins(interaction, f"Lecture du screen impossible ({type(exc).__name__})")
+            await interaction.response.send_message(
+                "⚠️ Je n'ai pas réussi à lire ce screen. L'administration a été prévenue.",
+                ephemeral=True,
+                view=IdentityRetryView(self.guild_id, self.user_id),
+            )
+            return
+        if len(nickname) < 2 or confidence < 45:
+            await _alert_admins(interaction, "OCR incertain", image_bytes, nickname, confidence)
+            await interaction.response.send_message(
+                "⚠️ Le pseudo n'a pas pu être lu avec suffisamment de certitude. L'administration a été prévenue.",
+                ephemeral=True,
+                view=IdentityRetryView(self.guild_id, self.user_id),
+            )
+            return
+        await interaction.response.send_message(
+            "🔎 Screen analysé. Vérifie le pseudo détecté ci-dessous.",
+            ephemeral=True,
+            view=OCRConfirmView(self.guild_id, self.user_id, nickname),
+        )
+
+
+class IdentityRetryView(discord.ui.View):
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=900)
+        self.guild_id = guild_id
+        self.user_id = user_id
+
+    @discord.ui.button(label="ENVOYER UN NOUVEAU SCREEN", emoji="📸", style=discord.ButtonStyle.primary)
+    async def retry(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("⛔ Cette identification ne t'appartient pas.", ephemeral=True)
+            return
+        await interaction.response.send_modal(ScreenUploadModal(self.guild_id, self.user_id))
+
+
 class IdentityView(discord.ui.LayoutView):
     def __init__(self, guild_id: int, user_id: int):
         super().__init__(timeout=1800)
         state = _state(guild_id, user_id)
         back = discord.ui.Button(label="Retour", emoji="↩️", style=discord.ButtonStyle.secondary)
-        analyse = discord.ui.Button(label="ANALYSER MON SCREEN", emoji="📸", style=discord.ButtonStyle.primary)
+        upload = discord.ui.Button(label="ENVOYER MON SCREEN", emoji="📷", style=discord.ButtonStyle.primary)
 
         async def back_cb(interaction: discord.Interaction):
             await interaction.response.edit_message(view=LanguageView())
 
-        async def analyse_cb(interaction: discord.Interaction):
+        async def upload_cb(interaction: discord.Interaction):
             if interaction.user.id != user_id:
                 await interaction.response.send_message("⛔ Cette identification ne t'appartient pas.", ephemeral=True)
                 return
-            await interaction.response.defer()
-            message, attachment = await _find_latest_player_screen(interaction)
-            if attachment is None:
-                await interaction.edit_original_response(view=IdentityErrorView(guild_id, user_id, "Aucun screen PNG/JPG récent n'a été trouvé dans ce salon."))
-                return
-            try:
-                image_bytes = await attachment.read()
-                nickname, confidence = _ocr_nickname(image_bytes)
-            except Exception as exc:
-                await _alert_admins(interaction, f"Lecture du screen impossible ({type(exc).__name__})")
-                await interaction.edit_original_response(view=IdentityErrorView(guild_id, user_id, "Je n'ai pas réussi à lire ce screen."))
-                return
-            # Le screen est supprimé après lecture lorsque le bot en a la permission.
-            try:
-                await message.delete(reason="Screen d'identification Althérya traité")
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-            if len(nickname) < 2 or confidence < 45:
-                await _alert_admins(interaction, "OCR incertain", image_bytes, nickname, confidence)
-                await interaction.edit_original_response(view=IdentityErrorView(guild_id, user_id, "Le pseudo n'a pas pu être lu avec suffisamment de certitude."))
-                return
-            await interaction.edit_original_response(view=OCRConfirmView(guild_id, user_id, nickname))
+            await interaction.response.send_modal(ScreenUploadModal(guild_id, user_id))
 
         back.callback = back_cb
-        analyse.callback = analyse_cb
+        upload.callback = upload_cb
         self.add_item(_container(
             discord.ui.TextDisplay("## 📸 IDENTIFICATION\n**ÉTAPE 02 / 03**"), _sep(),
             discord.ui.TextDisplay(
-                "### Envoie ton screen **Informations joueur** dans ce salon.\n"
-                "Althérya lira automatiquement **uniquement la zone de ton pseudo**.\n\n"
-                "Une fois le screen envoyé, clique sur **ANALYSER MON SCREEN**.\n"
+                "### Envoie ton screen **Informations joueur**.\n"
+                "Appuie sur **ENVOYER MON SCREEN** : Discord ouvrira une petite fenêtre où tu pourras sélectionner ta capture.\n\n"
+                "Althérya analysera automatiquement **uniquement la zone du pseudo**.\n"
                 "-# Aucune saisie manuelle du pseudo n'est autorisée."
             ),
             discord.ui.TextDisplay(f"🌍 Langue choisie : **{state['language'] or '—'}**"), _sep(),
-            discord.ui.ActionRow(back, analyse), _sep(),
+            discord.ui.ActionRow(back, upload), _sep(),
             discord.ui.TextDisplay("**● ━ ● ━ ○**   Langue • Identité • Règlement"),
         ))
 
