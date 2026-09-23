@@ -172,6 +172,11 @@ DESTINATIONS = {
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# V2.46 — Accueil séparé : même bot/processus, logique isolée dans accueil.py.
+import accueil as ACCUEIL
+ACCUEIL.register(bot)
+
 SENTINEL = AltheryaSentinel(bot, BASE)
 
 async def safe_defer(interaction: discord.Interaction):
@@ -7042,10 +7047,11 @@ async def _altherya_setup_hook():
     """
     global _COMMAND_TREE_SYNCED
     SENTINEL.start()
+    ACCUEIL.register_persistent_views(bot)
     bot.add_view(AdminHubV244())
     local_names = sorted(command.name for command in bot.tree.get_commands())
     print(f"[COMMANDES] Arbre local chargé ({len(local_names)}) : {', '.join(local_names)}")
-    required_commands = {"altherya", "admin", "admin_setup", "admin_move", "admin_refresh"}
+    required_commands = {"altherya", "admin", "admin_setup", "admin_move", "admin_refresh", "setup_accueil"}
     missing_commands = sorted(name for name in required_commands if bot.tree.get_command(name) is None)
     if missing_commands:
         raise RuntimeError("Commandes critiques absentes de l'arbre local avant synchronisation : " + ", ".join(missing_commands))
