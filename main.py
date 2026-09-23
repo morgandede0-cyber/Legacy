@@ -6469,7 +6469,7 @@ class V244ResetView(discord.ui.View):
 class V244PlayerActions(discord.ui.View):
     def __init__(self,uid:int):
         super().__init__(timeout=600); self.uid=int(uid)
-        specs=[('gold','Gold','💰'),('xp','XP','⭐'),('level','Niveau','🎚️'),('items','Inventaire','🎒'),('gear','Équipement','⚔️'),('rep','Réputations','🏅'),('cd','Cooldowns','⏱️'),('reset','Reset','🔄')]
+        specs=[('gold','Gold','💰'),('xp','XP','⭐'),('level','Niveau','🎚️'),('items','Inventaire','🎒'),('gear','Équipement','⚔️'),('rep','Réputations','🏅'),('cd','Cooldowns','⏱️'),('onboarding','Désinscrire','🗑️'),('reset','Reset','🔄')]
         for key,label,emoji in specs:
             b=discord.ui.Button(label=label,emoji=emoji,style=discord.ButtonStyle.secondary)
             async def cb(i,k=key):
@@ -6481,6 +6481,11 @@ class V244PlayerActions(discord.ui.View):
                 if k=='rep': return await i.response.edit_message(content='🏅 Choisis la réputation puis fixe directement son palier.',view=V244RepView(self.uid))
                 if k=='cd':
                     r=ADMIN_STORE.reset_cooldowns(self.uid); ADMIN_STORE.log(i.user.id,self.uid,'reset_cooldowns',str(r)); return await i.response.send_message('✅ Cooldowns réinitialisés.',ephemeral=True)
+                if k=='onboarding':
+                    member = await _get_member(i, self.uid)
+                    if member is None:
+                        return await i.response.send_message('❌ Joueur introuvable sur le serveur.', ephemeral=True)
+                    return await i.response.send_message(view=ACCUEIL.AdminUnregisterConfirmView(i.user.id, member), ephemeral=True)
                 return await i.response.edit_message(content='⚠️ Choisis précisément ce que tu veux réinitialiser.',view=V244ResetView(self.uid))
             b.callback=cb; self.add_item(b)
 
