@@ -6,8 +6,13 @@ Parcours : Langue -> Pseudo -> Règlement -> Entrer.
 from __future__ import annotations
 
 import os
+import re
+import io
 import sqlite3
 from pathlib import Path
+
+from PIL import Image
+import pytesseract
 
 import discord
 from discord import app_commands
@@ -95,7 +100,7 @@ class WelcomePublicView(discord.ui.LayoutView):
                 _sep(),
                 discord.ui.TextDisplay(
                     "🌍 **Langue**\nChoisis la langue que tu souhaites utiliser.\n\n"
-                    "✒️ **Identité**\nChoisis le nom sous lequel tu seras connu.\n\n"
+                    "📸 **Identité**\nEnvoie ton screen Informations joueur : ton pseudo sera détecté automatiquement.\n\n"
                     "📜 **Lois du Royaume**\nPrends connaissance du règlement."
                 ),
                 _sep(),
@@ -147,33 +152,216 @@ class LanguageView(discord.ui.LayoutView):
         )
 
 
-class NickModal(discord.ui.Modal, title="✒️ Ton identité"):
-    nickname = discord.ui.TextInput(
-        label="Pseudo",
-        placeholder="Le nom que tu porteras dans le royaume",
-        min_length=2,
-        max_length=32,
-        required=True,
-    )
+# Zone du pseudo relevée sur le screen de référence 744x429.
+# Les coordonnées sont stockées en ratios pour rester compatibles avec les mêmes
+# captures redimensionnées sans déformation.
+NICK_CROP = (300 / 744, 109 / 429, 463 / 744, 144 / 429)
+ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
+
+
+def _clean_ocr_name(raw: str) -> str:
+    name = re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ0-9 ._'\-]", "", raw or "")
+    name = re.sub(r"\s+", " ", name).strip(" ._-")
+    # Correction ciblée du préfixe de clan visible sur les profils : IV.
+    # Tesseract peut lire le V stylisé comme ¥, Y ou v.
+    if re.match(r"^[Ii][VvYy]\s+", name):
+        name = "IV " + re.sub(r"^[Ii][VvYy]\s+", "", name)
+    return name[:32]
+
+
+def _ocr_nickname(image_bytes: bytes) -> tuple[str, float]:
+    with Image.open(io.BytesIO(image_bytes)) as source:
+        image = source.convert("RGB")
+    w, h = image.size
+    if w < 500 or h < 280:
+        raise ValueError("capture trop petite")
+    x1, y1, x2, y2 = NICK_CROP
+    crop = image.crop((int(w*x1), int(h*y1), int(w*x2), int(h*y2)))
+
+    # Le pseudo du jeu est jaune/or sur fond sombre. On isole cette couleur afin
+    # d'éviter que le cadre rouge, le portrait et les autres textes perturbent l'OCR.
+    mask = Image.new("L", crop.size, 255)
+    out = mask.load()
+    for y in range(crop.height):
+        for x in range(crop.width):
+            r, g, b = crop.getpixel((x, y))
+            if r > 150 and g > 95 and b < 145 and r > b * 1.35:
+                out[x, y] = 0
+    mask = mask.resize((mask.width * 8, mask.height * 8))
+    data = pytesseract.image_to_data(mask, config="--psm 7", output_type=pytesseract.Output.DICT)
+    words, confs = [], []
+    for text, conf in zip(data.get("text", []), data.get("conf", [])):
+        text = (text or "").strip()
+        try:
+            c = float(conf)
+        except (TypeError, ValueError):
+            c = -1
+        if text:
+            words.append(text)
+            if c >= 0:
+                confs.append(c)
+    name = _clean_ocr_name(" ".join(words))
+    confidence = sum(confs) / len(confs) if confs else 0.0
+    return name, confidence
+
+
+async def _find_latest_player_screen(interaction: discord.Interaction):
+    channel = interaction.channel
+    if channel is None or not hasattr(channel, "history"):
+        return None, None
+    async for message in channel.history(limit=35):
+        if message.author.id != interaction.user.id:
+            continue
+        for attachment in message.attachments:
+            ctype = (attachment.content_type or "").lower()
+            if ctype in ALLOWED_IMAGE_TYPES or attachment.filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+                return message, attachment
+    return None, None
+
+
+class AdminCorrectionModal(discord.ui.Modal, title="Corriger l'identité"):
+    nickname = discord.ui.TextInput(label="Pseudo exact", min_length=2, max_length=32, required=True)
+
+    def __init__(self, guild_id: int, user_id: int, detected: str = ""):
+        super().__init__()
+        self.guild_id = guild_id
+        self.user_id = user_id
+        self.nickname.default = detected[:32] if detected else None
 
     async def on_submit(self, interaction: discord.Interaction):
+        if not interaction.permissions.administrator:
+            await interaction.response.send_message("⛔ Réservé aux administrateurs.", ephemeral=True)
+            return
         name = str(self.nickname).strip()
-        if isinstance(interaction.user, discord.Member):
+        member = interaction.guild.get_member(self.user_id) if interaction.guild else None
+        if member is None and interaction.guild:
             try:
-                await interaction.user.edit(nick=name, reason="Onboarding Althérya")
-            except discord.Forbidden:
-                await interaction.response.send_message(
-                    "⚠️ Je ne peux pas modifier ton pseudo. Donne-moi **Gérer les pseudos** et place mon rôle suffisamment haut.",
-                    ephemeral=True,
-                )
-                return
+                member = await interaction.guild.fetch_member(self.user_id)
             except discord.HTTPException:
-                await interaction.response.send_message(
-                    "⚠️ Discord a refusé ce pseudo. Essaie un autre nom.", ephemeral=True
-                )
+                member = None
+        if member:
+            try:
+                await member.edit(nick=name, reason=f"Correction onboarding par {interaction.user}")
+            except (discord.Forbidden, discord.HTTPException):
+                await interaction.response.send_message("⚠️ Pseudo enregistré, mais Discord refuse le renommage.", ephemeral=True)
+                _save(self.guild_id, self.user_id, nickname=name)
                 return
-        _save(_gid(interaction), interaction.user.id, nickname=name)
-        await interaction.response.edit_message(view=RulesView(_gid(interaction), interaction.user.id))
+        _save(self.guild_id, self.user_id, nickname=name)
+        await interaction.response.send_message(f"✅ Identité corrigée et validée : **{discord.utils.escape_markdown(name)}**.", ephemeral=True)
+        try:
+            await interaction.message.edit(view=None)
+        except discord.HTTPException:
+            pass
+
+
+class AdminReviewView(discord.ui.View):
+    def __init__(self, guild_id: int, user_id: int, detected: str = ""):
+        super().__init__(timeout=86400)
+        self.guild_id = guild_id
+        self.user_id = user_id
+        self.detected = detected[:32]
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.permissions.administrator:
+            return True
+        await interaction.response.send_message("⛔ Réservé aux administrateurs.", ephemeral=True)
+        return False
+
+    @discord.ui.button(label="Valider la détection", emoji="✅", style=discord.ButtonStyle.success)
+    async def validate(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.detected:
+            await interaction.response.send_message("⚠️ Aucun pseudo détecté à valider. Utilise Corriger.", ephemeral=True)
+            return
+        member = interaction.guild.get_member(self.user_id) if interaction.guild else None
+        if member:
+            try:
+                await member.edit(nick=self.detected, reason=f"Validation onboarding par {interaction.user}")
+            except (discord.Forbidden, discord.HTTPException):
+                await interaction.response.send_message("⚠️ Discord refuse le renommage. Vérifie la hiérarchie des rôles.", ephemeral=True)
+                return
+        _save(self.guild_id, self.user_id, nickname=self.detected)
+        await interaction.response.send_message(f"✅ **{discord.utils.escape_markdown(self.detected)}** validé.", ephemeral=True)
+        await interaction.message.edit(view=None)
+
+    @discord.ui.button(label="Corriger", emoji="✏️", style=discord.ButtonStyle.primary)
+    async def correct(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AdminCorrectionModal(self.guild_id, self.user_id, self.detected))
+
+    @discord.ui.button(label="Refuser", emoji="❌", style=discord.ButtonStyle.danger)
+    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("❌ Identification refusée. Le joueur devra renvoyer un screen.", ephemeral=True)
+        await interaction.message.edit(view=None)
+
+
+async def _alert_admins(interaction: discord.Interaction, reason: str, image_bytes: bytes | None = None,
+                        detected: str | None = None, confidence: float | None = None):
+    channel_id = _env_id("ADMIN_ONBOARDING_CHANNEL_ID")
+    if not channel_id or not interaction.guild:
+        return
+    channel = interaction.guild.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await interaction.guild.fetch_channel(channel_id)
+        except (discord.HTTPException, discord.Forbidden):
+            return
+    details = (
+        f"## 🚨 Échec d'identification Althérya\n"
+        f"👤 Joueur : {interaction.user.mention} (`{interaction.user.id}`)\n"
+        f"⚠️ Motif : **{reason}**\n"
+        f"🔎 Détection : **{discord.utils.escape_markdown(detected or 'Aucune')}**\n"
+        f"📊 Confiance OCR : **{confidence:.0f}%**" if confidence is not None else
+        f"## 🚨 Échec d'identification Althérya\n👤 Joueur : {interaction.user.mention} (`{interaction.user.id}`)\n⚠️ Motif : **{reason}**\n🔎 Détection : **{discord.utils.escape_markdown(detected or 'Aucune')}**"
+    )
+    file = discord.File(io.BytesIO(image_bytes), filename="identification.png") if image_bytes else None
+    await channel.send(details, file=file, view=AdminReviewView(interaction.guild.id, interaction.user.id, detected or ""))
+
+
+class OCRConfirmView(discord.ui.LayoutView):
+    def __init__(self, guild_id: int, user_id: int, nickname: str):
+        super().__init__(timeout=900)
+        self.nickname = nickname
+        confirm = discord.ui.Button(label="CONFIRMER", emoji="✅", style=discord.ButtonStyle.success)
+        retry = discord.ui.Button(label="RENVOYER UN SCREEN", emoji="📸", style=discord.ButtonStyle.secondary)
+
+        async def confirm_cb(interaction: discord.Interaction):
+            if interaction.user.id != user_id:
+                await interaction.response.send_message("⛔ Cette identification ne t'appartient pas.", ephemeral=True)
+                return
+            if isinstance(interaction.user, discord.Member):
+                try:
+                    await interaction.user.edit(nick=self.nickname, reason="Identification OCR Althérya")
+                except (discord.Forbidden, discord.HTTPException) as exc:
+                    await _alert_admins(interaction, "Discord refuse le renommage du membre", detected=self.nickname)
+                    await interaction.response.edit_message(view=IdentityErrorView(guild_id, user_id, "Le renommage Discord a échoué. Un administrateur a été prévenu."))
+                    return
+            _save(guild_id, user_id, nickname=self.nickname)
+            await interaction.response.edit_message(view=RulesView(guild_id, user_id))
+
+        async def retry_cb(interaction: discord.Interaction):
+            await interaction.response.edit_message(view=IdentityView(guild_id, user_id))
+
+        confirm.callback = confirm_cb
+        retry.callback = retry_cb
+        self.add_item(_container(
+            discord.ui.TextDisplay("## 🔎 IDENTITÉ DÉTECTÉE\n**ÉTAPE 02 / 03**"), _sep(),
+            discord.ui.TextDisplay(f"### Pseudo détecté\n# **{discord.utils.escape_markdown(nickname)}**\n\nConfirme uniquement si ce pseudo correspond exactement à celui affiché sur ton screen."),
+            discord.ui.ActionRow(retry, confirm), _sep(),
+            discord.ui.TextDisplay("**● ━ ● ━ ○**   Langue • Identité • Règlement"),
+        ))
+
+
+class IdentityErrorView(discord.ui.LayoutView):
+    def __init__(self, guild_id: int, user_id: int, reason: str):
+        super().__init__(timeout=1800)
+        retry = discord.ui.Button(label="ENVOYER UN NOUVEAU SCREEN", emoji="📸", style=discord.ButtonStyle.primary)
+        async def retry_cb(interaction: discord.Interaction):
+            await interaction.response.edit_message(view=IdentityView(guild_id, user_id))
+        retry.callback = retry_cb
+        self.add_item(_container(
+            discord.ui.TextDisplay("## ⚠️ IDENTIFICATION IMPOSSIBLE\n**ÉTAPE 02 / 03**"), _sep(),
+            discord.ui.TextDisplay(f"{reason}\n\nL'équipe d'administration a été prévenue. Tu peux envoyer un nouveau screen puis réessayer."),
+            discord.ui.ActionRow(retry),
+        ))
 
 
 class IdentityView(discord.ui.LayoutView):
@@ -181,36 +369,58 @@ class IdentityView(discord.ui.LayoutView):
         super().__init__(timeout=1800)
         state = _state(guild_id, user_id)
         back = discord.ui.Button(label="Retour", emoji="↩️", style=discord.ButtonStyle.secondary)
-        choose = discord.ui.Button(label="CHOISIR MON PSEUDO", emoji="✒️", style=discord.ButtonStyle.primary)
+        analyse = discord.ui.Button(label="ANALYSER MON SCREEN", emoji="📸", style=discord.ButtonStyle.primary)
 
         async def back_cb(interaction: discord.Interaction):
             await interaction.response.edit_message(view=LanguageView())
 
-        async def choose_cb(interaction: discord.Interaction):
-            await interaction.response.send_modal(NickModal())
+        async def analyse_cb(interaction: discord.Interaction):
+            if interaction.user.id != user_id:
+                await interaction.response.send_message("⛔ Cette identification ne t'appartient pas.", ephemeral=True)
+                return
+            await interaction.response.defer()
+            message, attachment = await _find_latest_player_screen(interaction)
+            if attachment is None:
+                await interaction.edit_original_response(view=IdentityErrorView(guild_id, user_id, "Aucun screen PNG/JPG récent n'a été trouvé dans ce salon."))
+                return
+            try:
+                image_bytes = await attachment.read()
+                nickname, confidence = _ocr_nickname(image_bytes)
+            except Exception as exc:
+                await _alert_admins(interaction, f"Lecture du screen impossible ({type(exc).__name__})")
+                await interaction.edit_original_response(view=IdentityErrorView(guild_id, user_id, "Je n'ai pas réussi à lire ce screen."))
+                return
+            # Le screen est supprimé après lecture lorsque le bot en a la permission.
+            try:
+                await message.delete(reason="Screen d'identification Althérya traité")
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+            if len(nickname) < 2 or confidence < 45:
+                await _alert_admins(interaction, "OCR incertain", image_bytes, nickname, confidence)
+                await interaction.edit_original_response(view=IdentityErrorView(guild_id, user_id, "Le pseudo n'a pas pu être lu avec suffisamment de certitude."))
+                return
+            await interaction.edit_original_response(view=OCRConfirmView(guild_id, user_id, nickname))
 
         back.callback = back_cb
-        choose.callback = choose_cb
-        self.add_item(
-            _container(
-                discord.ui.TextDisplay("## ✒️ TON IDENTITÉ\n**ÉTAPE 02 / 03**"),
-                _sep(),
-                discord.ui.TextDisplay(
-                    "### Chaque aventurier doit porter un nom.\nCe nom deviendra ton **pseudo sur le serveur**."
-                ),
-                discord.ui.TextDisplay(f"🌍 Langue choisie : **{state['language'] or '—'}**"),
-                _sep(),
-                discord.ui.ActionRow(back, choose),
-                _sep(),
-                discord.ui.TextDisplay("**● ━ ● ━ ○**   Langue • Identité • Règlement"),
-            )
-        )
+        analyse.callback = analyse_cb
+        self.add_item(_container(
+            discord.ui.TextDisplay("## 📸 IDENTIFICATION\n**ÉTAPE 02 / 03**"), _sep(),
+            discord.ui.TextDisplay(
+                "### Envoie ton screen **Informations joueur** dans ce salon.\n"
+                "Althérya lira automatiquement **uniquement la zone de ton pseudo**.\n\n"
+                "Une fois le screen envoyé, clique sur **ANALYSER MON SCREEN**.\n"
+                "-# Aucune saisie manuelle du pseudo n'est autorisée."
+            ),
+            discord.ui.TextDisplay(f"🌍 Langue choisie : **{state['language'] or '—'}**"), _sep(),
+            discord.ui.ActionRow(back, analyse), _sep(),
+            discord.ui.TextDisplay("**● ━ ● ━ ○**   Langue • Identité • Règlement"),
+        ))
 
 
 class RulesView(discord.ui.LayoutView):
     def __init__(self, guild_id: int, user_id: int):
         super().__init__(timeout=1800)
-        back = discord.ui.Button(label="Modifier mon pseudo", emoji="↩️", style=discord.ButtonStyle.secondary)
+        back = discord.ui.Button(label="Retour à l’identification", emoji="↩️", style=discord.ButtonStyle.secondary)
         accept = discord.ui.Button(label="J'ACCEPTE", emoji="✅", style=discord.ButtonStyle.success)
         rules_channel_id = _env_id("RULES_CHANNEL_ID")
 

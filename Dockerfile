@@ -10,6 +10,7 @@ WORKDIR /app
 # Bibliothèques natives utilisées par Pillow / pyvips / Pango / Cairo.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    tesseract-ocr \
     tzdata \
     libvips42 \
     libpango-1.0-0 \
