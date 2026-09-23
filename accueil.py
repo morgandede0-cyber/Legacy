@@ -330,6 +330,18 @@ def register(bot) -> None:
         return
 
     async def setup_accueil(interaction: discord.Interaction):
+        # Vérification côté bot : compatible avec les versions discord.py où
+        # app_commands.Command(...) n'accepte pas default_permissions=.
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "⚠️ Cette commande doit être utilisée dans un serveur.", ephemeral=True
+            )
+            return
+        if not interaction.permissions.administrator:
+            await interaction.response.send_message(
+                "⛔ Cette commande est réservée aux administrateurs.", ephemeral=True
+            )
+            return
         if not interaction.channel:
             await interaction.response.send_message("⚠️ Salon introuvable.", ephemeral=True)
             return
@@ -341,7 +353,6 @@ def register(bot) -> None:
         name="setup_accueil",
         description="Installe le panneau d'accueil Althérya dans ce salon",
         callback=setup_accueil,
-        default_permissions=discord.Permissions(administrator=True),
     )
     bot.tree.add_command(command)
 
