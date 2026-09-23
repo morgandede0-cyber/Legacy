@@ -162,10 +162,16 @@ ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
 def _clean_ocr_name(raw: str) -> str:
     name = re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ0-9 ._'\-]", "", raw or "")
     name = re.sub(r"\s+", " ", name).strip(" ._-")
-    # Correction ciblée du préfixe de clan visible sur les profils : IV.
-    # Tesseract peut lire le V stylisé comme ¥, Y ou v.
+    # Correction ciblée du préfixe de clan visible sur CET écran fixe : IV.
+    # La police du jeu fusionne visuellement I+V et Tesseract peut le lire
+    # comme Iv/IY mais aussi W, Ww ou Wv. On ne corrige que le PREMIER
+    # token suivi d'un espace, jamais un W présent dans le pseudo lui-même.
     if re.match(r"^[Ii][VvYy]\s+", name):
         name = "IV " + re.sub(r"^[Ii][VvYy]\s+", "", name)
+    elif re.match(r"^[Ww]{1,2}\s+", name):
+        name = "IV " + re.sub(r"^[Ww]{1,2}\s+", "", name)
+    elif re.match(r"^[Ww][Vv]\s+", name):
+        name = "IV " + re.sub(r"^[Ww][Vv]\s+", "", name)
     return name[:32]
 
 
