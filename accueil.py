@@ -368,18 +368,30 @@ class ScreenUploadModal(discord.ui.Modal, title="Identification Althérya"):
         ))
 
     async def on_submit(self, interaction: discord.Interaction):
+        # IMPORTANT: une modale contenant FileUpload est une interaction Components V2.
+        # Discord refuse alors tout champ `content` dans la réponse (50035).
+        # Toutes les réponses de cette modale sont donc rendues uniquement via LayoutView.
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message("⛔ Cette identification ne t'appartient pas.", ephemeral=True)
+            await interaction.response.send_message(
+                view=IdentityErrorView(self.guild_id, self.user_id, "Cette identification ne t'appartient pas."),
+                ephemeral=True,
+            )
             return
         attachments = self.upload.values
         if not attachments:
-            await interaction.response.send_message("⚠️ Aucun screen reçu. Réessaie.", ephemeral=True)
+            await interaction.response.send_message(
+                view=IdentityErrorView(self.guild_id, self.user_id, "Aucun screen n'a été reçu."),
+                ephemeral=True,
+            )
             return
         attachment = attachments[0]
         ctype = (attachment.content_type or "").lower()
         if ctype not in ALLOWED_IMAGE_TYPES and not attachment.filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
             await _alert_admins(interaction, "Fichier non image envoyé dans l'identification")
-            await interaction.response.send_message("⚠️ Le fichier doit être une image PNG, JPG ou WEBP.", ephemeral=True)
+            await interaction.response.send_message(
+                view=IdentityErrorView(self.guild_id, self.user_id, "Le fichier doit être une image PNG, JPG ou WEBP."),
+                ephemeral=True,
+            )
             return
         try:
             image_bytes = await attachment.read()
@@ -387,23 +399,20 @@ class ScreenUploadModal(discord.ui.Modal, title="Identification Althérya"):
         except Exception as exc:
             await _alert_admins(interaction, f"Lecture du screen impossible ({type(exc).__name__})")
             await interaction.response.send_message(
-                "⚠️ Je n'ai pas réussi à lire ce screen. L'administration a été prévenue.",
+                view=IdentityErrorView(self.guild_id, self.user_id, "Je n'ai pas réussi à lire ce screen."),
                 ephemeral=True,
-                view=IdentityRetryView(self.guild_id, self.user_id),
             )
             return
         if len(nickname) < 2 or confidence < 45:
             await _alert_admins(interaction, "OCR incertain", image_bytes, nickname, confidence)
             await interaction.response.send_message(
-                "⚠️ Le pseudo n'a pas pu être lu avec suffisamment de certitude. L'administration a été prévenue.",
+                view=IdentityErrorView(self.guild_id, self.user_id, "Le pseudo n'a pas pu être lu avec suffisamment de certitude."),
                 ephemeral=True,
-                view=IdentityRetryView(self.guild_id, self.user_id),
             )
             return
         await interaction.response.send_message(
-            "🔎 Screen analysé. Vérifie le pseudo détecté ci-dessous.",
-            ephemeral=True,
             view=OCRConfirmView(self.guild_id, self.user_id, nickname),
+            ephemeral=True,
         )
 
 
