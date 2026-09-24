@@ -12,6 +12,7 @@ import discord
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 
 from castle_engine import CastleStore
+from progression import ASHKAR_FLOOR_XP
 from gazette_engine import GazetteStore
 import legacy_world_forge as WORLD_FORGE
 import display_mode as DISPLAY_MODE
@@ -186,6 +187,7 @@ class TowerStore:
         await WORLD_FORGE.DB.add_currency(uid, gold=reward["gold"], pouciel=reward["pouciel"])
         # Quêtes quotidiennes + Gazette sont alimentées par la vraie validation de l'étage.
         CASTLE.record(uid, "tower_clear", 1)
+        CASTLE.add_xp(uid, ASHKAR_FLOOR_XP.get(int(floor), 15))
         if floor == 10:
             GAZETTE.record_event("ashkar_boss", uid, 10)
         if floor > global_before and floor >= 5:

@@ -30,13 +30,19 @@ FORGE_GOLD_COSTS = {
 XP_REWARDS = {
     "arena_win": 35,
     "arena_loss": 8,
-    "casino": 1,
+    "casino": 2,
+    "tavern_game": 3,
+    "tavern_pvp_win": 8,
+    "tavern_pvp_loss": 3,
+    "larceny_success": 4,
+    "npc_theft_success": 7,
+    "player_theft_success": 10,
+    "crime_success": 12,
+    "heist_win": 40,
     "forge_2": 20,
     "forge_3": 35,
     "forge_4": 60,
     "forge_5": 100,
-    "heist_win": 20,
-    "crime_success": 5,
 }
 
 EXPEDITION_XP = {
@@ -47,3 +53,8 @@ EXPEDITION_XP = {
     "desert": 100,
     "mountains": 140,
 }
+
+# XP des systèmes longs : récompense proportionnelle au temps / risque.
+EXPEDITION_TIER_XP = {1: 20, 2: 35, 3: 55, 4: 80, 5: 120}
+ASHKAR_FLOOR_XP = {1: 15, 2: 18, 3: 21, 4: 24, 5: 28, 6: 32, 7: 36, 8: 40, 9: 45, 10: 75}
+JOB_RARITY_XP = {"common": 8, "uncommon": 12, "rare": 18, "epic": 28, "legendary": 45}

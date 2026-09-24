@@ -12,6 +12,10 @@ from dotenv import load_dotenv
 load_dotenv()
 BASE = Path(__file__).resolve().parent
 DATA = BASE / "data"
+
+# BETA V1 — wipe unique avant toute initialisation/migration des données de jeu.
+from beta_reset import run_once as run_beta_reset_once
+BETA_RESET_PERFORMED = run_beta_reset_once(DATA)
 from shared_economy import (
     migrate_legacy_wallets, pending_events, mark_event_processed,
     enabled as shared_economy_enabled, diagnostics as shared_economy_diagnostics,
@@ -19,7 +23,7 @@ from shared_economy import (
 )
 MIGRATED_GOLD_PLAYERS = migrate_legacy_wallets(DATA / "legacy.sqlite3")
 # Recovery unique du solde Altherya historique constaté avant le passage au wallet partagé.
-RECOVERED_LEGACY_WALLET = recover_known_legacy_wallet(666805849011912705, 101000643)
+RECOVERED_LEGACY_WALLET = False  # BETA V1: aucun ancien solde ne doit être réinjecté
 
 import discord
 from discord.ext import commands, tasks
@@ -33,7 +37,7 @@ from casino_engine import (CasinoStore, MAX_BET, VIP_MAX_BET, MIN_BET, SLOT_SYMB
 from casino_render import render_blackjack, render_roulette_strip, render_slot_machine, render_horse_race, EUROPEAN_WHEEL
 from castle_engine import CastleStore, DAILY_REWARD, DAILY_XP, QUESTS, QUEST_GLOBAL_GOLD, QUEST_GLOBAL_XP, level_from_xp
 import random
-from progression import FORGE_LEVEL_REQUIREMENTS, FORGE_GOLD_COSTS, XP_REWARDS, EXPEDITION_XP
+from progression import FORGE_LEVEL_REQUIREMENTS, FORGE_GOLD_COSTS, XP_REWARDS, EXPEDITION_XP, EXPEDITION_TIER_XP, JOB_RARITY_XP
 from achievements import AchievementStore, ACHIEVEMENTS, RARITIES
 from admin_engine import AdminStore, EVENTS
 from tavern_engine import TavernGameStore, MIN_TAVERN_BET, MAX_TAVERN_BET, TAVERN_ROUND_COST, roll_die, flip_coin, rps_bot, rps_result
@@ -180,9 +184,31 @@ ACCUEIL.register(bot)
 
 SENTINEL = AltheryaSentinel(bot, BASE)
 
-async def safe_defer(interaction: discord.Interaction):
-    if not interaction.response.is_done():
-        await interaction.response.defer()
+async def safe_defer(interaction: discord.Interaction, *, ephemeral: bool = False):
+    """Accuse réception immédiatement. Les interactions Discord expirent en ~3 s.
+    Retourne False si Discord nous a déjà livré une interaction expirée.
+    """
+    if interaction.response.is_done():
+        return True
+    try:
+        await interaction.response.defer(ephemeral=ephemeral)
+        return True
+    except discord.NotFound:
+        # Interaction déjà expirée (souvent après un pic de latence Gateway).
+        return False
+    except discord.HTTPException as exc:
+        if getattr(exc, "code", None) == 10062:
+            return False
+        raise
+
+async def interaction_reply(interaction: discord.Interaction, message: str, *, ephemeral: bool = True):
+    """Répond correctement qu'une interaction ait déjà été defer ou non."""
+    try:
+        if interaction.response.is_done():
+            return await interaction.followup.send(message, ephemeral=ephemeral)
+        return await interaction.response.send_message(message, ephemeral=ephemeral)
+    except discord.NotFound:
+        return None
 
 
 def _level_up_embed(info: dict) -> discord.Embed:
@@ -1157,15 +1183,14 @@ class TavernDrinkSelect(discord.ui.Select):
         _, label, emoji, required = drink
         current_tier = TAVERN_STORE.tavern_reputation(interaction.user.id)["tier"]
         if current_tier < required:
-            await interaction.response.send_message("🔒 Cette boisson n'est pas encore disponible pour toi.", ephemeral=True); return
+            await interaction_reply(interaction, "🔒 Cette boisson n'est pas encore disponible pour toi.", ephemeral=True); return
         rep = TAVERN_STORE.drink(interaction.user.id, selected)
         if not rep.get("ok"):
             limit = int(rep.get("limit", TAVERN_STORE.daily_drink_limit(interaction.user.id)))
             if rep.get("reason") == "daily_limit":
-                await interaction.response.send_message(
-                    f"🥴 **Le tavernier retire ton verre.**\n« Non. Tu es déjà saoul. Ça suffit pour aujourd'hui. »\n\n🍺 Limite : **{limit}/{limit} verres aujourd'hui**. Reviens demain.", ephemeral=True); return
+                await interaction_reply(interaction, f"🥴 **Le tavernier retire ton verre.**\n« Non. Tu es déjà saoul. Ça suffit pour aujourd'hui. »\n\n🍺 Limite : **{limit}/{limit} verres aujourd'hui**. Reviens demain.", ephemeral=True); return
             remaining = int(rep.get("cooldown_seconds", 0))
-            await interaction.response.send_message(f"⏳ **Pas si vite.** Attends encore **{short_time(remaining)}** avant de boire.", ephemeral=True); return
+            await interaction_reply(interaction, f"⏳ **Pas si vite.** Attends encore **{short_time(remaining)}** avant de boire.", ephemeral=True); return
         if rep["tier"] > 0:
             await announce_achievement(interaction, f"tavern_reputation:{rep['tier']}")
         limit = int(rep.get("limit", TAVERN_STORE.daily_drink_limit(interaction.user.id)))
@@ -1190,7 +1215,7 @@ class TavernDrinkSelect(discord.ui.Select):
         if event and event.get("id") == "horse_judges":
             await show_horse_wakeup(interaction, drink_line)
             return
-        await interaction.response.send_message(drink_line + event_text, ephemeral=True)
+        await interaction_reply(interaction, drink_line + event_text, ephemeral=True)
 
 class TavernDrinksView(discord.ui.View):
     def __init__(self, user_id: int | None = None):
@@ -1409,7 +1434,10 @@ async def settle_tavern_pvp(guild: discord.Guild, session_id: str, winner_id: in
     c0, o0 = int(result["challenger_id"]), int(result["opponent_id"])
     CASTLE_STORE.record(c0, "tavern_game", 1)
     CASTLE_STORE.record(o0, "tavern_game", 1)
+    CASTLE_STORE.add_xp(c0, XP_REWARDS["tavern_pvp_loss"])
+    CASTLE_STORE.add_xp(o0, XP_REWARDS["tavern_pvp_loss"])
     if winner_id is not None:
+        CASTLE_STORE.add_xp(int(winner_id), XP_REWARDS["tavern_pvp_win"] - XP_REWARDS["tavern_pvp_loss"])
         c, o, wager = result["challenger_id"], result["opponent_id"], result["wager"]
         loser_id = o if int(winner_id) == c else c
         winner = guild.get_member(int(winner_id)) or discord.Object(id=int(winner_id))
@@ -1627,6 +1655,7 @@ async def settle_tavern_game(interaction: discord.Interaction, session_id: str, 
     wallet = int(settled.get("wallet", TAVERN_STORE.wallet(interaction.user.id)))
     net = actual - int(wager)
     CASTLE_STORE.record(interaction.user.id, "tavern_game", 1)
+    CASTLE_STORE.add_xp(interaction.user.id, XP_REWARDS["tavern_game"])
     if net:
         await announce_gold_activity(interaction.guild, interaction.user, net, f"Taverne — {reason}")
     if actual > payout:
@@ -2079,33 +2108,30 @@ class StoryMarketView(discord.ui.View):
             if not await guard(i): return
             items_now = _current_story_market_items(self.owner_id)
             if not items_now:
-                await i.response.edit_message(content=None, embed=story_market_embed(self.owner_id, 0), view=StoryMarketView(self.owner_id, 0))
+                if not await safe_defer(i): return
+                await edit_v2_surface(i, embed=story_market_embed(self.owner_id, 0), view=StoryMarketView(self.owner_id, 0), title="📖 Marché de l'histoire")
                 return
             self.index = (self.index - 1) % len(items_now)
-            await i.response.edit_message(
-                content=None,
-                embed=story_market_embed(self.owner_id, self.index),
-                view=StoryMarketView(self.owner_id, self.index),
-            )
+            if not await safe_defer(i): return
+            await edit_v2_surface(i, embed=story_market_embed(self.owner_id, self.index), view=StoryMarketView(self.owner_id, self.index), title="📖 Marché de l'histoire")
 
         async def next_cb(i):
             if not await guard(i): return
             items_now = _current_story_market_items(self.owner_id)
             if not items_now:
-                await i.response.edit_message(content=None, embed=story_market_embed(self.owner_id, 0), view=StoryMarketView(self.owner_id, 0))
+                if not await safe_defer(i): return
+                await edit_v2_surface(i, embed=story_market_embed(self.owner_id, 0), view=StoryMarketView(self.owner_id, 0), title="📖 Marché de l'histoire")
                 return
             self.index = (self.index + 1) % len(items_now)
-            await i.response.edit_message(
-                content=None,
-                embed=story_market_embed(self.owner_id, self.index),
-                view=StoryMarketView(self.owner_id, self.index),
-            )
+            if not await safe_defer(i): return
+            await edit_v2_surface(i, embed=story_market_embed(self.owner_id, self.index), view=StoryMarketView(self.owner_id, self.index), title="📖 Marché de l'histoire")
 
         async def buy_cb(i):
             if not await guard(i): return
             items_before = _current_story_market_items(self.owner_id)
             if not items_before:
-                await i.response.edit_message(content=None, embed=story_market_embed(self.owner_id, 0), view=StoryMarketView(self.owner_id, 0))
+                if not await safe_defer(i): return
+                await edit_v2_surface(i, embed=story_market_embed(self.owner_id, 0), view=StoryMarketView(self.owner_id, 0), title="📖 Marché de l'histoire")
                 return
             self.index %= len(items_before)
             item = items_before[self.index]
@@ -3267,7 +3293,9 @@ class ExpeditionView(discord.ui.View):
                 ok,msg,job=JOB_BOARD_STORE.claim_reward(interaction.user.id)
                 if ok and job:
                     await announce_gold_activity(interaction.guild,interaction.user,job.reward,f"Petite annonce — {job.title}",public=False)
-                    notice=f"🎁 **Récompense récupérée : +{job.reward} Gold** pour *{job.title}*."
+                    job_xp = JOB_RARITY_XP.get(getattr(job, "rarity", "common"), 8)
+                    CASTLE_STORE.add_xp(interaction.user.id, job_xp)
+                    notice=f"🎁 **Récompense récupérée : +{job.reward} Gold • +{job_xp} XP** pour *{job.title}*."
                 else: notice=f"⏳ **{msg}**"
                 await edit_with_asset(interaction,PLACES/"expeditions.png","expeditions.png",ExpeditionView(interaction.user.id),expedition_home_content(interaction.user.id,notice))
             claim.callback=claim_cb; self.add_item(claim)
@@ -3773,7 +3801,9 @@ async def finalize_expedition_run(run_id: str) -> bool:
     # finalize_run n'est vrai que lors du premier transfert : XP/quête ne peuvent donc
     # pas être doublés, même si Coolify redémarre exactement au moment de la fin.
     CASTLE_STORE.record(final_run.user_id, "expedition")
-    CASTLE_STORE.add_xp(final_run.user_id, 20)
+    expedition_meta = EXPEDITIONS.get(final_run.expedition_key, {})
+    expedition_tier = int(expedition_meta.get("destination_index", 1))
+    CASTLE_STORE.add_xp(final_run.user_id, EXPEDITION_TIER_XP.get(expedition_tier, 20))
 
     # V1.70 : le message mémorisé est l'annonce publique /succes, pas le panneau privé.
     # On transforme donc l'annonce « en cours » en résultat final au lieu de la supprimer.
@@ -4025,6 +4055,7 @@ class ThiefTargetSelect(discord.ui.UserSelect):
         amount = int(result.get("amount", 0))
         sp,fp,cp=result.get("chances",(0,0,0)); risk=f"\n🎯 Cible **{result.get('victim_rep','Inconnu')}** — réussite {int(sp*100)}% • échec {int(fp*100)}% • riposte {int(cp*100)}%"
         if outcome == "success":
+            CASTLE_STORE.add_xp(interaction.user.id, XP_REWARDS["player_theft_success"])
             rep = DARK_STORE.criminal_reputation(interaction.user.id)
             if rep["tier"]: await announce_achievement(interaction, f"criminal_reputation:{rep['tier']}")
             text = (f"✅ **Vol réussi !** Tu subtilises **{amount} Gold** à {target.mention}."
@@ -4084,6 +4115,7 @@ class NPCTargetSelect(discord.ui.Select):
             msg=(f"⏳ Nouveau vol dans **{short_time(result['cooldown'])}**." if result.get('cooldown') else result.get('message','Vol impossible.'))
             await interaction.response.send_message(msg,ephemeral=True); return
         if result['outcome']=='success':
+            CASTLE_STORE.add_xp(interaction.user.id, XP_REWARDS["npc_theft_success"])
             rep=DARK_STORE.criminal_reputation(interaction.user.id)
             if rep['tier']: await announce_achievement(interaction,f"criminal_reputation:{rep['tier']}")
             await announce_gold_activity(interaction.guild,interaction.user,int(result['amount']),f"Vol du PNJ {result['target']}",public=False)
@@ -4112,6 +4144,7 @@ class ThiefView(discord.ui.View):
             r=DARK_STORE.petty_larceny(i.user.id)
             if not r.get('ok'):
                 await i.followup.send(f"⏳ Nouveau larcin dans **{short_time(r.get('cooldown',0))}**.",ephemeral=True); return
+            CASTLE_STORE.add_xp(i.user.id, XP_REWARDS["larceny_success"])
             rep=DARK_STORE.criminal_reputation(i.user.id)
             if rep['tier']: await announce_achievement(i,f"criminal_reputation:{rep['tier']}")
             if r['amount']: await announce_gold_activity(i.guild,i.user,int(r['amount']),"Petit larcin",public=False)
@@ -4133,6 +4166,7 @@ class ThiefView(discord.ui.View):
                 await i.response.send_message(msg,ephemeral=True); return
             amount=int(r.get('amount',0)); outcome=r['outcome']
             if outcome=='success':
+                CASTLE_STORE.add_xp(i.user.id, XP_REWARDS["crime_success"])
                 rep=DARK_STORE.criminal_reputation(i.user.id)
                 if rep['tier']: await announce_achievement(i,f"criminal_reputation:{rep['tier']}")
                 if amount: await announce_gold_activity(i.guild,i.user,amount,"Crime réussi",public=False)
@@ -4165,6 +4199,7 @@ class HeistGuessModal(discord.ui.Modal, title="Code du coffre"):
         icons = {"bien placé": "🟢", "mal placé": "🟠", "incorrect": "⚫"}
         fb = "\n".join(f"{icons[status]} **{digit}** : {status}" for digit, status in result.get("details", []))
         if result.get("won"):
+            CASTLE_STORE.add_xp(interaction.user.id, XP_REWARDS["heist_win"])
             rep = DARK_STORE.criminal_reputation(interaction.user.id)
             if rep["tier"]: await announce_achievement(interaction, f"criminal_reputation:{rep['tier']}")
             if result.get("reward"):
@@ -7311,6 +7346,7 @@ class TavernDrinksView(discord.ui.View):
             if tier < required: continue
             b=discord.ui.Button(label=label,emoji=emoji,style=discord.ButtonStyle.primary)
             async def cb(i,k=key):
+                if not await safe_defer(i, ephemeral=True): return
                 sel=_LegacyTavernDrinkSelect(i.user.id); sel._values=[k]; await sel.callback(i)
             b.callback=cb; self.add_item(b)
         back=discord.ui.Button(label="Retour au comptoir",emoji="↩️",style=discord.ButtonStyle.secondary)

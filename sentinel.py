@@ -27,6 +27,7 @@ class AltheryaSentinel:
         self.buckets: dict[str,ErrorBucket]={}
         self.recent=deque(maxlen=100)
         self._health_task=None; self._old_loop_handler=None
+        self._high_latency_streak=0
         self._reporting=False
 
     @staticmethod
@@ -104,7 +105,14 @@ class AltheryaSentinel:
         except Exception as e: await self.report(e,source='Sentinel',context='écriture heartbeat')
         if not self.bot.is_ready(): return
         latency=float(getattr(self.bot,'latency',0) or 0)
-        if latency>5: await self.anomaly('Discord très lent',f'Latence Gateway {latency:.2f}s')
+        # Un heartbeat isolé >5 s peut venir de Discord/réseau et ne justifie pas une
+        # alerte critique. On alerte uniquement si la dégradation persiste.
+        if latency > 5:
+            self._high_latency_streak += 1
+        else:
+            self._high_latency_streak = 0
+        if self._high_latency_streak == 3:
+            await self.anomaly('Discord durablement lent', f'Latence Gateway {latency:.2f}s sur 3 contrôles consécutifs')
         db=self.data/'legacy.sqlite3'
         try:
             con=sqlite3.connect(db,timeout=3); con.execute('SELECT 1').fetchone(); con.close()
