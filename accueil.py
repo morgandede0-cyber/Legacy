@@ -79,77 +79,106 @@ def _gid(interaction: discord.Interaction) -> int:
     return interaction.guild_id or 0
 
 
+def _lang(guild_id: int, user_id: int) -> str:
+    value = (_state(guild_id, user_id).get("language") or "Français").lower()
+    return "en" if value in {"english", "en", "anglais"} else "fr"
+
+
+def _set_lang(guild_id: int, user_id: int, code: str) -> None:
+    _save(guild_id, user_id, language="English" if code == "en" else "Français")
+
+
 class WelcomePublicView(discord.ui.LayoutView):
+    """Panneau public. Le sélecteur ouvre une copie privée afin que la langue reste propre à chaque joueur."""
     def __init__(self):
         super().__init__(timeout=None)
+        lang = discord.ui.Button(
+            label="FR", emoji="🇫🇷", style=discord.ButtonStyle.secondary,
+            custom_id="altherya_accueil:lang",
+        )
         start = discord.ui.Button(
-            label="COMMENCER",
-            emoji="👑",
-            style=discord.ButtonStyle.primary,
+            label="COMMENCER", emoji="👑", style=discord.ButtonStyle.primary,
             custom_id="altherya_accueil:start",
         )
+        lang.callback = self._language
         start.callback = self._start
-        self.add_item(
-            _container(
-                discord.ui.TextDisplay("# 👑  A L T H É R Y A\n### BIENVENUE DANS LE ROYAUME"),
-                _sep(),
-                discord.ui.TextDisplay(
-                    "Une nouvelle aventure commence ici.\n\n"
-                    "Avant que les portes d’Althérya ne s’ouvrent, prépare ton arrivée en **3 étapes**."
-                ),
-                _sep(),
-                discord.ui.TextDisplay(
-                    "🌍 **Langue**\nChoisis la langue que tu souhaites utiliser.\n\n"
-                    "📸 **Identité**\nEnvoie ton screen Informations joueur : ton pseudo sera détecté automatiquement.\n\n"
-                    "📜 **Lois du Royaume**\nPrends connaissance du règlement."
-                ),
-                _sep(),
-                discord.ui.ActionRow(start),
-                discord.ui.TextDisplay("-# Althérya • Les portes du royaume attendent ton arrivée."),
-            )
+        self.add_item(_container(
+            discord.ui.Section("# 👑  A L T H É R Y A\n### BIENVENUE DANS LE ROYAUME", accessory=lang),
+            _sep(),
+            discord.ui.TextDisplay(
+                "Une nouvelle aventure commence ici.\n\n"
+                "Avant que les portes d’Althérya ne s’ouvrent, prépare ton arrivée en **3 étapes**."
+            ),
+            _sep(),
+            discord.ui.TextDisplay(
+                "🌍 **Langue**\nChoisis FR / EN avec le bouton en haut à droite.\n\n"
+                "📸 **Identité**\nEnvoie ton screen Informations joueur : ton pseudo sera détecté automatiquement.\n\n"
+                "📜 **Lois du Royaume**\nPrends connaissance du règlement."
+            ),
+            _sep(),
+            discord.ui.ActionRow(start),
+            discord.ui.TextDisplay("-# Althérya • Les portes du royaume attendent ton arrivée."),
+        ))
+
+    async def _language(self, interaction: discord.Interaction):
+        current = _lang(_gid(interaction), interaction.user.id)
+        target = "en" if current == "fr" else "fr"
+        _set_lang(_gid(interaction), interaction.user.id, target)
+        await interaction.response.send_message(
+            view=WelcomePrivateView(_gid(interaction), interaction.user.id), ephemeral=True
         )
 
     async def _start(self, interaction: discord.Interaction):
         if _state(_gid(interaction), interaction.user.id)["completed"]:
-            await interaction.response.send_message(
-                "👑 Ton inscription est déjà terminée. Bienvenue à Althérya !", ephemeral=True
-            )
+            msg = "👑 Registration already completed. Welcome to Althérya!" if _lang(_gid(interaction), interaction.user.id) == "en" else "👑 Ton inscription est déjà terminée. Bienvenue à Althérya !"
+            await interaction.response.send_message(msg, ephemeral=True)
             return
-        await interaction.response.send_message(view=LanguageView(), ephemeral=True)
-
-
-class LanguageView(discord.ui.LayoutView):
-    LANGS = [
-        ("Français", "🇫🇷", "fr"),
-        ("English", "🇬🇧", "en"),
-        ("Español", "🇪🇸", "es"),
-        ("Deutsch", "🇩🇪", "de"),
-        ("Português", "🇵🇹", "pt"),
-    ]
-
-    def __init__(self):
-        super().__init__(timeout=1800)
-        buttons = []
-        for label, emoji, code in self.LANGS:
-            button = discord.ui.Button(label=label, emoji=emoji, style=discord.ButtonStyle.secondary)
-
-            async def choose(interaction: discord.Interaction, chosen=label):
-                _save(_gid(interaction), interaction.user.id, language=chosen)
-                await interaction.response.edit_message(view=IdentityView(_gid(interaction), interaction.user.id))
-
-            button.callback = choose
-            buttons.append(button)
-        self.add_item(
-            _container(
-                discord.ui.TextDisplay("## 🌍 TON VOYAGE COMMENCE ICI\n**ÉTAPE 01 / 03**"),
-                _sep(),
-                discord.ui.TextDisplay("### Quelle langue parlera-t-on durant ton aventure ?"),
-                discord.ui.ActionRow(*buttons[:4]),
-                discord.ui.ActionRow(buttons[4]),
-                _sep(),
-                discord.ui.TextDisplay("**● ━ ○ ━ ○**   Langue • Identité • Règlement"),
-            )
+        if not _state(_gid(interaction), interaction.user.id)["language"]:
+            _set_lang(_gid(interaction), interaction.user.id, "fr")
+        await interaction.response.send_message(
+            view=WelcomePrivateView(_gid(interaction), interaction.user.id), ephemeral=True
         )
+
+
+class WelcomePrivateView(discord.ui.LayoutView):
+    """Copie privée : ici le bouton FR/EN peut réellement changer visuellement pour le joueur."""
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=1800)
+        lang = _lang(guild_id, user_id)
+        toggle = discord.ui.Button(
+            label="EN" if lang == "en" else "FR",
+            emoji="🇬🇧" if lang == "en" else "🇫🇷",
+            style=discord.ButtonStyle.secondary,
+        )
+        start = discord.ui.Button(
+            label="START" if lang == "en" else "COMMENCER",
+            emoji="👑", style=discord.ButtonStyle.primary,
+        )
+        async def toggle_cb(interaction: discord.Interaction):
+            if interaction.user.id != user_id:
+                await interaction.response.send_message("⛔ This panel is not yours." if lang == "en" else "⛔ Ce panneau ne t'appartient pas.", ephemeral=True)
+                return
+            _set_lang(guild_id, user_id, "fr" if lang == "en" else "en")
+            await interaction.response.edit_message(view=WelcomePrivateView(guild_id, user_id))
+        async def start_cb(interaction: discord.Interaction):
+            await interaction.response.edit_message(view=IdentityView(guild_id, user_id))
+        toggle.callback = toggle_cb
+        start.callback = start_cb
+        if lang == "en":
+            header = "# 👑  A L T H É R Y A\n### WELCOME TO THE KINGDOM"
+            intro = "A new adventure begins here.\n\nBefore the gates of Althérya open, prepare your arrival in **3 steps**."
+            steps = "🌍 **Language**\nYour choice applies to the entire registration process.\n\n📸 **Identity**\nSend your Player Information screenshot: your nickname will be detected automatically.\n\n📜 **Laws of the Kingdom**\nRead and accept the server rules."
+            foot = "-# Althérya • The gates of the kingdom await your arrival."
+        else:
+            header = "# 👑  A L T H É R Y A\n### BIENVENUE DANS LE ROYAUME"
+            intro = "Une nouvelle aventure commence ici.\n\nAvant que les portes d’Althérya ne s’ouvrent, prépare ton arrivée en **3 étapes**."
+            steps = "🌍 **Langue**\nTon choix s'applique à tout le processus d'accueil.\n\n📸 **Identité**\nEnvoie ton screen Informations joueur : ton pseudo sera détecté automatiquement.\n\n📜 **Lois du Royaume**\nPrends connaissance du règlement."
+            foot = "-# Althérya • Les portes du royaume attendent ton arrivée."
+        self.add_item(_container(
+            discord.ui.Section(header, accessory=toggle), _sep(),
+            discord.ui.TextDisplay(intro), _sep(), discord.ui.TextDisplay(steps), _sep(),
+            discord.ui.ActionRow(start), discord.ui.TextDisplay(foot),
+        ))
 
 
 # Zone du pseudo relevée sur le screen de référence 744x429.
@@ -312,48 +341,38 @@ class OCRConfirmView(discord.ui.LayoutView):
     def __init__(self, guild_id: int, user_id: int, nickname: str):
         super().__init__(timeout=900)
         self.nickname = nickname
-        confirm = discord.ui.Button(label="CONFIRMER", emoji="✅", style=discord.ButtonStyle.success)
-        retry = discord.ui.Button(label="RENVOYER UN SCREEN", emoji="📸", style=discord.ButtonStyle.secondary)
-
+        lang = _lang(guild_id, user_id)
+        confirm = discord.ui.Button(label="CONFIRM" if lang == "en" else "CONFIRMER", emoji="✅", style=discord.ButtonStyle.success)
+        retry = discord.ui.Button(label="SEND ANOTHER SCREEN" if lang == "en" else "RENVOYER UN SCREEN", emoji="📸", style=discord.ButtonStyle.secondary)
         async def confirm_cb(interaction: discord.Interaction):
             if interaction.user.id != user_id:
-                await interaction.response.send_message("⛔ Cette identification ne t'appartient pas.", ephemeral=True)
-                return
+                await interaction.response.send_message("⛔ This identification is not yours." if lang == "en" else "⛔ Cette identification ne t'appartient pas.", ephemeral=True); return
             if isinstance(interaction.user, discord.Member):
-                try:
-                    await interaction.user.edit(nick=self.nickname, reason="Identification OCR Althérya")
-                except (discord.Forbidden, discord.HTTPException) as exc:
+                try: await interaction.user.edit(nick=self.nickname, reason="Identification OCR Althérya")
+                except (discord.Forbidden, discord.HTTPException):
                     await _alert_admins(interaction, "Discord refuse le renommage du membre", detected=self.nickname)
-                    await interaction.response.edit_message(view=IdentityErrorView(guild_id, user_id, "Le renommage Discord a échoué. Un administrateur a été prévenu."))
-                    return
+                    reason = "Discord nickname update failed. An administrator has been notified." if lang == "en" else "Le renommage Discord a échoué. Un administrateur a été prévenu."
+                    await interaction.response.edit_message(view=IdentityErrorView(guild_id, user_id, reason)); return
             _save(guild_id, user_id, nickname=self.nickname)
             await interaction.response.edit_message(view=RulesView(guild_id, user_id))
-
-        async def retry_cb(interaction: discord.Interaction):
-            await interaction.response.edit_message(view=IdentityView(guild_id, user_id))
-
-        confirm.callback = confirm_cb
-        retry.callback = retry_cb
-        self.add_item(_container(
-            discord.ui.TextDisplay("## 🔎 IDENTITÉ DÉTECTÉE\n**ÉTAPE 02 / 03**"), _sep(),
-            discord.ui.TextDisplay(f"### Pseudo détecté\n# **{discord.utils.escape_markdown(nickname)}**\n\nConfirme uniquement si ce pseudo correspond exactement à celui affiché sur ton screen."),
-            discord.ui.ActionRow(retry, confirm), _sep(),
-            discord.ui.TextDisplay("**● ━ ● ━ ○**   Langue • Identité • Règlement"),
-        ))
+        async def retry_cb(interaction: discord.Interaction): await interaction.response.edit_message(view=IdentityView(guild_id, user_id))
+        confirm.callback=confirm_cb; retry.callback=retry_cb
+        title = "## 🔎 IDENTITY DETECTED\n**STEP 02 / 03**" if lang == "en" else "## 🔎 IDENTITÉ DÉTECTÉE\n**ÉTAPE 02 / 03**"
+        body = (f"### Detected nickname\n# **{discord.utils.escape_markdown(nickname)}**\n\nConfirm only if this nickname exactly matches the one shown on your screenshot." if lang == "en" else f"### Pseudo détecté\n# **{discord.utils.escape_markdown(nickname)}**\n\nConfirme uniquement si ce pseudo correspond exactement à celui affiché sur ton screen.")
+        progress = "**● ━ ● ━ ○**   Language • Identity • Rules" if lang == "en" else "**● ━ ● ━ ○**   Langue • Identité • Règlement"
+        self.add_item(_container(discord.ui.TextDisplay(title), _sep(), discord.ui.TextDisplay(body), discord.ui.ActionRow(retry,confirm), _sep(), discord.ui.TextDisplay(progress)))
 
 
 class IdentityErrorView(discord.ui.LayoutView):
     def __init__(self, guild_id: int, user_id: int, reason: str):
         super().__init__(timeout=1800)
-        retry = discord.ui.Button(label="ENVOYER UN NOUVEAU SCREEN", emoji="📸", style=discord.ButtonStyle.primary)
-        async def retry_cb(interaction: discord.Interaction):
-            await interaction.response.edit_message(view=IdentityView(guild_id, user_id))
-        retry.callback = retry_cb
-        self.add_item(_container(
-            discord.ui.TextDisplay("## ⚠️ IDENTIFICATION IMPOSSIBLE\n**ÉTAPE 02 / 03**"), _sep(),
-            discord.ui.TextDisplay(f"{reason}\n\nL'équipe d'administration a été prévenue. Tu peux envoyer un nouveau screen puis réessayer."),
-            discord.ui.ActionRow(retry),
-        ))
+        lang = _lang(guild_id, user_id)
+        retry = discord.ui.Button(label="SEND A NEW SCREEN" if lang == "en" else "ENVOYER UN NOUVEAU SCREEN", emoji="📸", style=discord.ButtonStyle.primary)
+        async def retry_cb(interaction: discord.Interaction): await interaction.response.edit_message(view=IdentityView(guild_id,user_id))
+        retry.callback=retry_cb
+        title = "## ⚠️ IDENTIFICATION FAILED\n**STEP 02 / 03**" if lang == "en" else "## ⚠️ IDENTIFICATION IMPOSSIBLE\n**ÉTAPE 02 / 03**"
+        suffix = "\n\nThe administration team has been notified. You can send a new screenshot and try again." if lang == "en" else "\n\nL'équipe d'administration a été prévenue. Tu peux envoyer un nouveau screen puis réessayer."
+        self.add_item(_container(discord.ui.TextDisplay(title), _sep(), discord.ui.TextDisplay(reason+suffix), discord.ui.ActionRow(retry)))
 
 
 class ScreenUploadModal(discord.ui.Modal, title="Identification Althérya"):
@@ -361,6 +380,7 @@ class ScreenUploadModal(discord.ui.Modal, title="Identification Althérya"):
         super().__init__(timeout=300)
         self.guild_id = guild_id
         self.user_id = user_id
+        lang = _lang(guild_id, user_id)
         self.upload = discord.ui.FileUpload(
             custom_id="altherya_identity_screen",
             required=True,
@@ -368,8 +388,8 @@ class ScreenUploadModal(discord.ui.Modal, title="Identification Althérya"):
             max_values=1,
         )
         self.add_item(discord.ui.Label(
-            text="Capture Informations joueur",
-            description="Ajoute une capture complète de ton profil (PNG/JPG/WEBP).",
+            text="Player Information screenshot" if lang == "en" else "Capture Informations joueur",
+            description="Add a full screenshot of your profile (PNG/JPG/WEBP)." if lang == "en" else "Ajoute une capture complète de ton profil (PNG/JPG/WEBP).",
             component=self.upload,
         ))
 
@@ -379,14 +399,14 @@ class ScreenUploadModal(discord.ui.Modal, title="Identification Althérya"):
         # Toutes les réponses de cette modale sont donc rendues uniquement via LayoutView.
         if interaction.user.id != self.user_id:
             await interaction.response.send_message(
-                view=IdentityErrorView(self.guild_id, self.user_id, "Cette identification ne t'appartient pas."),
+                view=IdentityErrorView(self.guild_id, self.user_id, ("This identification is not yours." if _lang(self.guild_id, self.user_id) == "en" else "Cette identification ne t'appartient pas.")),
                 ephemeral=True,
             )
             return
         attachments = self.upload.values
         if not attachments:
             await interaction.response.send_message(
-                view=IdentityErrorView(self.guild_id, self.user_id, "Aucun screen n'a été reçu."),
+                view=IdentityErrorView(self.guild_id, self.user_id, ("No screenshot was received." if _lang(self.guild_id, self.user_id) == "en" else "Aucun screen n'a été reçu.")),
                 ephemeral=True,
             )
             return
@@ -395,7 +415,7 @@ class ScreenUploadModal(discord.ui.Modal, title="Identification Althérya"):
         if ctype not in ALLOWED_IMAGE_TYPES and not attachment.filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
             await _alert_admins(interaction, "Fichier non image envoyé dans l'identification")
             await interaction.response.send_message(
-                view=IdentityErrorView(self.guild_id, self.user_id, "Le fichier doit être une image PNG, JPG ou WEBP."),
+                view=IdentityErrorView(self.guild_id, self.user_id, ("The file must be a PNG, JPG or WEBP image." if _lang(self.guild_id, self.user_id) == "en" else "Le fichier doit être une image PNG, JPG ou WEBP.")),
                 ephemeral=True,
             )
             return
@@ -405,14 +425,14 @@ class ScreenUploadModal(discord.ui.Modal, title="Identification Althérya"):
         except Exception as exc:
             await _alert_admins(interaction, f"Lecture du screen impossible ({type(exc).__name__})")
             await interaction.response.send_message(
-                view=IdentityErrorView(self.guild_id, self.user_id, "Je n'ai pas réussi à lire ce screen."),
+                view=IdentityErrorView(self.guild_id, self.user_id, ("I could not read this screenshot." if _lang(self.guild_id, self.user_id) == "en" else "Je n'ai pas réussi à lire ce screen.")),
                 ephemeral=True,
             )
             return
         if len(nickname) < 2 or confidence < 45:
             await _alert_admins(interaction, "OCR incertain", image_bytes, nickname, confidence)
             await interaction.response.send_message(
-                view=IdentityErrorView(self.guild_id, self.user_id, "Le pseudo n'a pas pu être lu avec suffisamment de certitude."),
+                view=IdentityErrorView(self.guild_id, self.user_id, ("The nickname could not be read with enough confidence." if _lang(self.guild_id, self.user_id) == "en" else "Le pseudo n'a pas pu être lu avec suffisamment de certitude.")),
                 ephemeral=True,
             )
             return
@@ -439,150 +459,62 @@ class IdentityRetryView(discord.ui.View):
 class IdentityView(discord.ui.LayoutView):
     def __init__(self, guild_id: int, user_id: int):
         super().__init__(timeout=1800)
-        state = _state(guild_id, user_id)
-        back = discord.ui.Button(label="Retour", emoji="↩️", style=discord.ButtonStyle.secondary)
-        upload = discord.ui.Button(label="ENVOYER MON SCREEN", emoji="📷", style=discord.ButtonStyle.primary)
-
-        async def back_cb(interaction: discord.Interaction):
-            await interaction.response.edit_message(view=LanguageView())
-
-        async def upload_cb(interaction: discord.Interaction):
+        lang = _lang(guild_id,user_id)
+        back=discord.ui.Button(label="Back" if lang=="en" else "Retour",emoji="↩️",style=discord.ButtonStyle.secondary)
+        upload=discord.ui.Button(label="UPLOAD MY SCREEN" if lang=="en" else "ENVOYER MON SCREEN",emoji="📷",style=discord.ButtonStyle.primary)
+        async def back_cb(interaction): await interaction.response.edit_message(view=WelcomePrivateView(guild_id,user_id))
+        async def upload_cb(interaction):
             if interaction.user.id != user_id:
-                await interaction.response.send_message("⛔ Cette identification ne t'appartient pas.", ephemeral=True)
-                return
-            await interaction.response.send_modal(ScreenUploadModal(guild_id, user_id))
-
-        back.callback = back_cb
-        upload.callback = upload_cb
-        self.add_item(_container(
-            discord.ui.TextDisplay("## 📸 IDENTIFICATION\n**ÉTAPE 02 / 03**"), _sep(),
-            discord.ui.TextDisplay(
-                "### Envoie ton screen **Informations joueur**.\n"
-                "Appuie sur **ENVOYER MON SCREEN** : Discord ouvrira une petite fenêtre où tu pourras sélectionner ta capture.\n\n"
-                "Althérya analysera automatiquement **uniquement la zone du pseudo**.\n"
-                "-# Aucune saisie manuelle du pseudo n'est autorisée."
-            ),
-            discord.ui.TextDisplay(f"🌍 Langue choisie : **{state['language'] or '—'}**"), _sep(),
-            discord.ui.ActionRow(back, upload), _sep(),
-            discord.ui.TextDisplay("**● ━ ● ━ ○**   Langue • Identité • Règlement"),
-        ))
+                await interaction.response.send_message("⛔ This identification is not yours." if lang=="en" else "⛔ Cette identification ne t'appartient pas.",ephemeral=True); return
+            await interaction.response.send_modal(ScreenUploadModal(guild_id,user_id))
+        back.callback=back_cb; upload.callback=upload_cb
+        title="## 📸 IDENTIFICATION\n**STEP 02 / 03**" if lang=="en" else "## 📸 IDENTIFICATION\n**ÉTAPE 02 / 03**"
+        body=("### Send your **Player Information** screenshot.\nPress **UPLOAD MY SCREEN**: Discord will open a window where you can select your screenshot.\n\nAlthérya will automatically analyse **only the nickname area**.\n-# Manual nickname entry is not allowed." if lang=="en" else "### Envoie ton screen **Informations joueur**.\nAppuie sur **ENVOYER MON SCREEN** : Discord ouvrira une petite fenêtre où tu pourras sélectionner ta capture.\n\nAlthérya analysera automatiquement **uniquement la zone du pseudo**.\n-# Aucune saisie manuelle du pseudo n'est autorisée.")
+        chosen="🌍 Selected language: **English**" if lang=="en" else "🌍 Langue choisie : **Français**"
+        progress="**● ━ ● ━ ○**   Language • Identity • Rules" if lang=="en" else "**● ━ ● ━ ○**   Langue • Identité • Règlement"
+        self.add_item(_container(discord.ui.TextDisplay(title),_sep(),discord.ui.TextDisplay(body),discord.ui.TextDisplay(chosen),_sep(),discord.ui.ActionRow(back,upload),_sep(),discord.ui.TextDisplay(progress)))
 
 
 class RulesView(discord.ui.LayoutView):
-    def __init__(self, guild_id: int, user_id: int):
-        super().__init__(timeout=1800)
-        back = discord.ui.Button(label="Retour à l’identification", emoji="↩️", style=discord.ButtonStyle.secondary)
-        accept = discord.ui.Button(label="J'ACCEPTE", emoji="✅", style=discord.ButtonStyle.success)
-        rules_channel_id = _env_id("RULES_CHANNEL_ID")
-
-        async def back_cb(interaction: discord.Interaction):
-            await interaction.response.edit_message(view=IdentityView(_gid(interaction), interaction.user.id))
-
-        async def accept_cb(interaction: discord.Interaction):
-            _save(_gid(interaction), interaction.user.id, rules=True)
-            await interaction.response.edit_message(view=FinalView(_gid(interaction), interaction.user.id))
-
-        back.callback = back_cb
-        accept.callback = accept_cb
-        components = [
-            discord.ui.TextDisplay("## 📜 LES LOIS DU ROYAUME\n**ÉTAPE 03 / 03**"),
-            _sep(),
-            discord.ui.TextDisplay(
-                "Toute communauté a besoin de quelques règles.\n\n"
-                "🤝 **Respecte les autres membres**\n"
-                "💬 **Utilise chaque salon à bon escient**\n"
-                "🛡️ **Harcèlement et discrimination interdits**\n"
-                "⚖️ **Respecte les décisions de la modération**"
-            ),
-            _sep(),
-            discord.ui.TextDisplay(
-                "En continuant, tu confirmes avoir lu et accepté le règlement complet du serveur."
-            ),
-        ]
-        if rules_channel_id and guild_id:
-            components.append(
-                discord.ui.ActionRow(
-                    discord.ui.Button(
-                        label="VOIR LE RÈGLEMENT",
-                        emoji="📖",
-                        style=discord.ButtonStyle.link,
-                        url=f"https://discord.com/channels/{guild_id}/{rules_channel_id}",
-                    )
-                )
-            )
-        components.extend(
-            [
-                discord.ui.ActionRow(back, accept),
-                _sep(),
-                discord.ui.TextDisplay("**● ━ ● ━ ●**   Langue • Identité • Règlement"),
-            ]
-        )
+    def __init__(self,guild_id:int,user_id:int):
+        super().__init__(timeout=1800); lang=_lang(guild_id,user_id)
+        back=discord.ui.Button(label="Back to identification" if lang=="en" else "Retour à l’identification",emoji="↩️",style=discord.ButtonStyle.secondary)
+        accept=discord.ui.Button(label="I ACCEPT" if lang=="en" else "J'ACCEPTE",emoji="✅",style=discord.ButtonStyle.success)
+        rules_channel_id=_env_id("RULES_CHANNEL_ID")
+        async def back_cb(interaction): await interaction.response.edit_message(view=IdentityView(_gid(interaction),interaction.user.id))
+        async def accept_cb(interaction): _save(_gid(interaction),interaction.user.id,rules=True); await interaction.response.edit_message(view=FinalView(_gid(interaction),interaction.user.id))
+        back.callback=back_cb; accept.callback=accept_cb
+        if lang=="en":
+            title="## 📜 LAWS OF THE KINGDOM\n**STEP 03 / 03**"; body="Every community needs a few rules.\n\n🤝 **Respect other members**\n💬 **Use each channel appropriately**\n🛡️ **Harassment and discrimination are forbidden**\n⚖️ **Respect moderation decisions**"; confirm="By continuing, you confirm that you have read and accepted the full server rules."; progress="**● ━ ● ━ ●**   Language • Identity • Rules"; rulelabel="VIEW THE RULES"
+        else:
+            title="## 📜 LES LOIS DU ROYAUME\n**ÉTAPE 03 / 03**"; body="Toute communauté a besoin de quelques règles.\n\n🤝 **Respecte les autres membres**\n💬 **Utilise chaque salon à bon escient**\n🛡️ **Harcèlement et discrimination interdits**\n⚖️ **Respecte les décisions de la modération**"; confirm="En continuant, tu confirmes avoir lu et accepté le règlement complet du serveur."; progress="**● ━ ● ━ ●**   Langue • Identité • Règlement"; rulelabel="VOIR LE RÈGLEMENT"
+        components=[discord.ui.TextDisplay(title),_sep(),discord.ui.TextDisplay(body),_sep(),discord.ui.TextDisplay(confirm)]
+        if rules_channel_id and guild_id: components.append(discord.ui.ActionRow(discord.ui.Button(label=rulelabel,emoji="📖",style=discord.ButtonStyle.link,url=f"https://discord.com/channels/{guild_id}/{rules_channel_id}")))
+        components.extend([discord.ui.ActionRow(back,accept),_sep(),discord.ui.TextDisplay(progress)])
         self.add_item(_container(*components))
 
 
 class FinalView(discord.ui.LayoutView):
-    def __init__(self, guild_id: int, user_id: int):
-        super().__init__(timeout=1800)
-        state = _state(guild_id, user_id)
-        nickname = discord.utils.escape_markdown(state["nickname"] or "Aventurier")
-        enter = discord.ui.Button(
-            label="ENTRER DANS LE ROYAUME", emoji="🏰", style=discord.ButtonStyle.success
-        )
-
-        async def enter_cb(interaction: discord.Interaction):
-            current = _state(_gid(interaction), interaction.user.id)
-            if not (current["language"] and current["nickname"] and current["rules"]):
-                await interaction.response.send_message("⚠️ Ton inscription est incomplète.", ephemeral=True)
-                return
-            member_role_id = _env_id("MEMBER_ROLE_ID")
+    def __init__(self,guild_id:int,user_id:int):
+        super().__init__(timeout=1800); state=_state(guild_id,user_id); lang=_lang(guild_id,user_id); nickname=discord.utils.escape_markdown(state["nickname"] or ("Adventurer" if lang=="en" else "Aventurier"))
+        enter=discord.ui.Button(label="ENTER THE KINGDOM" if lang=="en" else "ENTRER DANS LE ROYAUME",emoji="🏰",style=discord.ButtonStyle.success)
+        async def enter_cb(interaction):
+            current=_state(_gid(interaction),interaction.user.id)
+            if not(current["language"] and current["nickname"] and current["rules"]): await interaction.response.send_message("⚠️ Your registration is incomplete." if lang=="en" else "⚠️ Ton inscription est incomplète.",ephemeral=True); return
+            member_role_id=_env_id("MEMBER_ROLE_ID")
             if member_role_id:
-                if not interaction.guild or not isinstance(interaction.user, discord.Member):
-                    await interaction.response.send_message("⚠️ Cette étape doit être terminée sur le serveur.", ephemeral=True)
-                    return
-                role = interaction.guild.get_role(member_role_id)
-                if role is None:
-                    await interaction.response.send_message(
-                        "⚠️ Le rôle Membre configuré est introuvable. Vérifie `MEMBER_ROLE_ID`.", ephemeral=True
-                    )
-                    return
-                try:
-                    await interaction.user.add_roles(role, reason="Onboarding Althérya terminé")
-                except discord.Forbidden:
-                    await interaction.response.send_message(
-                        "⚠️ Je ne peux pas attribuer le rôle Membre. Place mon rôle au-dessus du rôle Membre.",
-                        ephemeral=True,
-                    )
-                    return
-            _save(_gid(interaction), interaction.user.id, completed=True)
-            done = discord.ui.LayoutView(timeout=300)
-            done.add_item(
-                _container(
-                    discord.ui.TextDisplay(
-                        f"# 👑 BIENVENUE, {discord.utils.escape_markdown(current['nickname'])}\n"
-                        "### Les portes du royaume sont ouvertes.\n\n"
-                        "Ton aventure à **Althérya** peut commencer."
-                    )
-                )
-            )
-            await interaction.response.edit_message(view=done)
-
-        enter.callback = enter_cb
-        self.add_item(
-            _container(
-                discord.ui.TextDisplay(f"# 👑 BIENVENUE, {nickname}"),
-                _sep(),
-                discord.ui.TextDisplay(
-                    f"🌍 **{state['language'] or '—'}**\n"
-                    f"✒️ **{nickname}**\n"
-                    "📜 **Règlement accepté**"
-                ),
-                _sep(),
-                discord.ui.TextDisplay(
-                    "### Les portes sont prêtes à s’ouvrir.\nTon aventure à Althérya peut commencer."
-                ),
-                discord.ui.ActionRow(enter),
-            )
-        )
+                if not interaction.guild or not isinstance(interaction.user,discord.Member): await interaction.response.send_message("⚠️ This step must be completed on the server." if lang=="en" else "⚠️ Cette étape doit être terminée sur le serveur.",ephemeral=True); return
+                role=interaction.guild.get_role(member_role_id)
+                if role is None: await interaction.response.send_message("⚠️ The configured Member role cannot be found." if lang=="en" else "⚠️ Le rôle Membre configuré est introuvable. Vérifie `MEMBER_ROLE_ID`.",ephemeral=True); return
+                try: await interaction.user.add_roles(role,reason="Onboarding Althérya terminé")
+                except discord.Forbidden: await interaction.response.send_message("⚠️ I cannot assign the Member role. Place my role above it." if lang=="en" else "⚠️ Je ne peux pas attribuer le rôle Membre. Place mon rôle au-dessus du rôle Membre.",ephemeral=True); return
+            _save(_gid(interaction),interaction.user.id,completed=True)
+            done=discord.ui.LayoutView(timeout=300); txt=(f"# 👑 WELCOME, {discord.utils.escape_markdown(current['nickname'])}\n### The gates of the kingdom are open.\n\nYour adventure in **Althérya** can begin." if lang=="en" else f"# 👑 BIENVENUE, {discord.utils.escape_markdown(current['nickname'])}\n### Les portes du royaume sont ouvertes.\n\nTon aventure à **Althérya** peut commencer.")
+            done.add_item(_container(discord.ui.TextDisplay(txt))); await interaction.response.edit_message(view=done)
+        enter.callback=enter_cb
+        if lang=="en": title=f"# 👑 WELCOME, {nickname}"; info=f"🌍 **English**\n✒️ **{nickname}**\n📜 **Rules accepted**"; body="### The gates are ready to open.\nYour adventure in Althérya can begin."
+        else: title=f"# 👑 BIENVENUE, {nickname}"; info=f"🌍 **Français**\n✒️ **{nickname}**\n📜 **Règlement accepté**"; body="### Les portes sont prêtes à s’ouvrir.\nTon aventure à Althérya peut commencer."
+        self.add_item(_container(discord.ui.TextDisplay(title),_sep(),discord.ui.TextDisplay(info),_sep(),discord.ui.TextDisplay(body),discord.ui.ActionRow(enter)))
 
 
 class AdminUnregisterConfirmView(discord.ui.LayoutView):
