@@ -89,96 +89,74 @@ def _set_lang(guild_id: int, user_id: int, code: str) -> None:
 
 
 class WelcomePublicView(discord.ui.LayoutView):
-    """Panneau public. Le sélecteur ouvre une copie privée afin que la langue reste propre à chaque joueur."""
-    def __init__(self):
+    """Panneau public bilingue : le bouton FR/EN modifie directement le vrai message."""
+    def __init__(self, lang: str = "fr"):
         super().__init__(timeout=None)
-        lang = discord.ui.Button(
-            label="FR", emoji="🇫🇷", style=discord.ButtonStyle.secondary,
-            custom_id="altherya_accueil:lang",
-        )
-        start = discord.ui.Button(
-            label="COMMENCER", emoji="👑", style=discord.ButtonStyle.primary,
-            custom_id="altherya_accueil:start",
-        )
-        lang.callback = self._language
-        start.callback = self._start
-        self.add_item(_container(
-            discord.ui.Section("# 👑  A L T H É R Y A\n### BIENVENUE DANS LE ROYAUME", accessory=lang),
-            _sep(),
-            discord.ui.TextDisplay(
-                "Une nouvelle aventure commence ici.\n\n"
-                "Avant que les portes d’Althérya ne s’ouvrent, prépare ton arrivée en **3 étapes**."
-            ),
-            _sep(),
-            discord.ui.TextDisplay(
-                "🌍 **Langue**\nChoisis FR / EN avec le bouton en haut à droite.\n\n"
-                "📸 **Identité**\nEnvoie ton screen Informations joueur : ton pseudo sera détecté automatiquement.\n\n"
-                "📜 **Lois du Royaume**\nPrends connaissance du règlement."
-            ),
-            _sep(),
-            discord.ui.ActionRow(start),
-            discord.ui.TextDisplay("-# Althérya • Les portes du royaume attendent ton arrivée."),
-        ))
-
-    async def _language(self, interaction: discord.Interaction):
-        current = _lang(_gid(interaction), interaction.user.id)
-        target = "en" if current == "fr" else "fr"
-        _set_lang(_gid(interaction), interaction.user.id, target)
-        await interaction.response.send_message(
-            view=WelcomePrivateView(_gid(interaction), interaction.user.id), ephemeral=True
-        )
-
-    async def _start(self, interaction: discord.Interaction):
-        if _state(_gid(interaction), interaction.user.id)["completed"]:
-            msg = "👑 Registration already completed. Welcome to Althérya!" if _lang(_gid(interaction), interaction.user.id) == "en" else "👑 Ton inscription est déjà terminée. Bienvenue à Althérya !"
-            await interaction.response.send_message(msg, ephemeral=True)
-            return
-        if not _state(_gid(interaction), interaction.user.id)["language"]:
-            _set_lang(_gid(interaction), interaction.user.id, "fr")
-        await interaction.response.send_message(
-            view=WelcomePrivateView(_gid(interaction), interaction.user.id), ephemeral=True
-        )
-
-
-class WelcomePrivateView(discord.ui.LayoutView):
-    """Copie privée : ici le bouton FR/EN peut réellement changer visuellement pour le joueur."""
-    def __init__(self, guild_id: int, user_id: int):
-        super().__init__(timeout=1800)
-        lang = _lang(guild_id, user_id)
+        lang = "en" if lang == "en" else "fr"
         toggle = discord.ui.Button(
             label="EN" if lang == "en" else "FR",
             emoji="🇬🇧" if lang == "en" else "🇫🇷",
             style=discord.ButtonStyle.secondary,
+            custom_id=f"altherya_accueil:lang:{lang}",
         )
         start = discord.ui.Button(
             label="START" if lang == "en" else "COMMENCER",
             emoji="👑", style=discord.ButtonStyle.primary,
+            custom_id=f"altherya_accueil:start:{lang}",
         )
-        async def toggle_cb(interaction: discord.Interaction):
-            if interaction.user.id != user_id:
-                await interaction.response.send_message("⛔ This panel is not yours." if lang == "en" else "⛔ Ce panneau ne t'appartient pas.", ephemeral=True)
-                return
-            _set_lang(guild_id, user_id, "fr" if lang == "en" else "en")
-            await interaction.response.edit_message(view=WelcomePrivateView(guild_id, user_id))
-        async def start_cb(interaction: discord.Interaction):
-            await interaction.response.edit_message(view=IdentityView(guild_id, user_id))
-        toggle.callback = toggle_cb
-        start.callback = start_cb
+        toggle.callback = self._language
+        start.callback = self._start
+
         if lang == "en":
             header = "# 👑  A L T H É R Y A\n### WELCOME TO THE KINGDOM"
             intro = "A new adventure begins here.\n\nBefore the gates of Althérya open, prepare your arrival in **3 steps**."
-            steps = "🌍 **Language**\nYour choice applies to the entire registration process.\n\n📸 **Identity**\nSend your Player Information screenshot: your nickname will be detected automatically.\n\n📜 **Laws of the Kingdom**\nRead and accept the server rules."
+            steps = (
+                "🌍 **Language**\nUse the 🇬🇧 **EN** button above to switch the welcome panel.\n\n"
+                "📸 **Identity**\nSend your Player Information screenshot: your nickname will be detected automatically.\n\n"
+                "📜 **Laws of the Kingdom**\nRead and accept the server rules."
+            )
             foot = "-# Althérya • The gates of the kingdom await your arrival."
         else:
             header = "# 👑  A L T H É R Y A\n### BIENVENUE DANS LE ROYAUME"
             intro = "Une nouvelle aventure commence ici.\n\nAvant que les portes d’Althérya ne s’ouvrent, prépare ton arrivée en **3 étapes**."
-            steps = "🌍 **Langue**\nTon choix s'applique à tout le processus d'accueil.\n\n📸 **Identité**\nEnvoie ton screen Informations joueur : ton pseudo sera détecté automatiquement.\n\n📜 **Lois du Royaume**\nPrends connaissance du règlement."
+            steps = (
+                "🌍 **Langue**\nUtilise le bouton 🇫🇷 **FR** ci-dessus pour changer la langue de l’accueil.\n\n"
+                "📸 **Identité**\nEnvoie ton screen Informations joueur : ton pseudo sera détecté automatiquement.\n\n"
+                "📜 **Lois du Royaume**\nPrends connaissance du règlement."
+            )
             foot = "-# Althérya • Les portes du royaume attendent ton arrivée."
+
+        self.lang = lang
         self.add_item(_container(
-            discord.ui.Section(header, accessory=toggle), _sep(),
-            discord.ui.TextDisplay(intro), _sep(), discord.ui.TextDisplay(steps), _sep(),
-            discord.ui.ActionRow(start), discord.ui.TextDisplay(foot),
+            discord.ui.Section(header, accessory=toggle),
+            _sep(), discord.ui.TextDisplay(intro), _sep(), discord.ui.TextDisplay(steps),
+            _sep(), discord.ui.ActionRow(start), discord.ui.TextDisplay(foot),
         ))
+
+    async def _language(self, interaction: discord.Interaction):
+        target = "fr" if self.lang == "en" else "en"
+        # Important : on édite le message PUBLIC existant. Aucun message éphémère
+        # n'est créé par le sélecteur de langue.
+        await interaction.response.edit_message(view=WelcomePublicView(target))
+
+    async def _start(self, interaction: discord.Interaction):
+        guild_id = _gid(interaction)
+        user_id = interaction.user.id
+        if _state(guild_id, user_id)["completed"]:
+            msg = (
+                "👑 Registration already completed. Welcome to Althérya!"
+                if self.lang == "en"
+                else "👑 Ton inscription est déjà terminée. Bienvenue à Althérya !"
+            )
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+
+        # La langue visible sur le vrai panneau devient la langue de CE joueur
+        # pour tout le reste de son processus d'accueil.
+        _set_lang(guild_id, user_id, self.lang)
+        await interaction.response.send_message(
+            view=IdentityView(guild_id, user_id), ephemeral=True
+        )
 
 
 # Zone du pseudo relevée sur le screen de référence 744x429.
@@ -625,7 +603,7 @@ def register(bot) -> None:
             await interaction.response.send_message("⚠️ Salon introuvable.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
-        await interaction.channel.send(view=WelcomePublicView())
+        await interaction.channel.send(view=WelcomePublicView("fr"))
         await interaction.followup.send("✅ Panneau d’accueil installé dans ce salon.", ephemeral=True)
 
     if bot.tree.get_command("setup_accueil") is None:
@@ -662,4 +640,5 @@ def register(bot) -> None:
 
 def register_persistent_views(bot) -> None:
     """Rattache uniquement le panneau public persistant après un redémarrage."""
-    bot.add_view(WelcomePublicView())
+    bot.add_view(WelcomePublicView("fr"))
+    bot.add_view(WelcomePublicView("en"))
