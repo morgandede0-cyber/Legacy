@@ -6329,11 +6329,14 @@ class AdminPanelView(discord.ui.View):
         super().__init__(timeout=300)
         server=discord.ui.Button(label='Serveur',emoji='🖥️',style=discord.ButtonStyle.primary)
         players=discord.ui.Button(label='Joueurs',emoji='👥',style=discord.ButtonStyle.success)
+        onboarding=discord.ui.Button(label='Inscriptions',emoji='👮',style=discord.ButtonStyle.secondary)
         async def server_cb(i):
             if await _admin_guard(i): await i.response.edit_message(content='🖥️ **ADMINISTRATION SERVEUR**',embed=None,view=AdminServerView())
         async def players_cb(i):
             if await _admin_guard(i): await i.response.edit_message(content='👥 **ADMINISTRATION DES JOUEURS**\nSélectionne un joueur pour ouvrir sa fiche complète.',embed=None,view=AdminPlayersView())
-        server.callback=server_cb; players.callback=players_cb; self.add_item(server); self.add_item(players)
+        async def onboarding_cb(i):
+            if await _admin_guard(i): await i.response.edit_message(content=None,embed=ACCUEIL.onboarding_admin_embed(i.guild),view=ACCUEIL.AdminOnboardingCenterView())
+        server.callback=server_cb; players.callback=players_cb; onboarding.callback=onboarding_cb; self.add_item(server); self.add_item(players); self.add_item(onboarding)
 
 
 def _player_profile_embed(member: discord.Member) -> discord.Embed:

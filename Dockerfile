@@ -11,6 +11,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     tesseract-ocr \
+    tesseract-ocr-eng tesseract-ocr-fra tesseract-ocr-deu tesseract-ocr-spa tesseract-ocr-por \
+    tesseract-ocr-rus tesseract-ocr-ukr tesseract-ocr-ara tesseract-ocr-chi-sim tesseract-ocr-jpn tesseract-ocr-kor \
     tzdata \
     libvips42 \
     libpango-1.0-0 \

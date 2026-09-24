@@ -9,6 +9,7 @@ import os
 import re
 import io
 import sqlite3
+import unicodedata
 from pathlib import Path
 
 from PIL import Image
@@ -34,6 +35,13 @@ DB.execute(
     )"""
 )
 DB.commit()
+# V2.49 — état de contrôle OCR / centre d'inscriptions (migration non destructive)
+for _column, _ddl in (("review_status", "TEXT DEFAULT ''"), ("ocr_confidence", "REAL DEFAULT 0")):
+    try:
+        DB.execute(f"ALTER TABLE onboarding ADD COLUMN {_column} {_ddl}")
+    except sqlite3.OperationalError:
+        pass
+DB.commit()
 
 
 def _env_id(name: str) -> int:
@@ -45,7 +53,7 @@ def _env_id(name: str) -> int:
 
 def _state(guild_id: int, user_id: int) -> dict:
     row = DB.execute(
-        "SELECT language,nickname,rules,completed FROM onboarding WHERE guild_id=? AND user_id=?",
+        "SELECT language,nickname,rules,completed,review_status,ocr_confidence FROM onboarding WHERE guild_id=? AND user_id=?",
         (guild_id, user_id),
     ).fetchone()
     return {
@@ -53,6 +61,8 @@ def _state(guild_id: int, user_id: int) -> dict:
         "nickname": row[1] if row else None,
         "rules": bool(row[2]) if row else False,
         "completed": bool(row[3]) if row else False,
+        "review_status": (row[4] or "") if row else "",
+        "ocr_confidence": float(row[5] or 0) if row else 0.0,
     }
 
 
@@ -61,8 +71,8 @@ def _save(guild_id: int, user_id: int, **changes) -> None:
     state.update(changes)
     DB.execute(
         """INSERT OR REPLACE INTO onboarding
-        (guild_id,user_id,language,nickname,rules,completed) VALUES(?,?,?,?,?,?)""",
-        (guild_id, user_id, state["language"], state["nickname"], int(state["rules"]), int(state["completed"])),
+        (guild_id,user_id,language,nickname,rules,completed,review_status,ocr_confidence) VALUES(?,?,?,?,?,?,?,?)""",
+        (guild_id, user_id, state["language"], state["nickname"], int(state["rules"]), int(state["completed"]), state.get("review_status", ""), float(state.get("ocr_confidence", 0))),
     )
     DB.commit()
 
@@ -130,7 +140,7 @@ class WelcomePublicView(discord.ui.LayoutView):
         self.add_item(_container(
             discord.ui.Section(header, accessory=toggle),
             _sep(), discord.ui.TextDisplay(intro), _sep(), discord.ui.TextDisplay(steps),
-            _sep(), discord.ui.ActionRow(start), discord.ui.TextDisplay(foot),
+            _sep(), discord.ui.TextDisplay("**○ ━ ○ ━ ○**   Language • Identity • Rules" if lang == "en" else "**○ ━ ○ ━ ○**   Langue • Identité • Règlement"), discord.ui.ActionRow(start), discord.ui.TextDisplay(foot),
         ))
 
     async def _language(self, interaction: discord.Interaction):
@@ -154,9 +164,17 @@ class WelcomePublicView(discord.ui.LayoutView):
         # La langue visible sur le vrai panneau devient la langue de CE joueur
         # pour tout le reste de son processus d'accueil.
         _set_lang(guild_id, user_id, self.lang)
-        await interaction.response.send_message(
-            view=IdentityView(guild_id, user_id), ephemeral=True
-        )
+        state = _state(guild_id, user_id)
+        # Reprise automatique : on repart exactement à la dernière étape utile.
+        if state.get("review_status") == "pending":
+            view = ReviewWaitingView(guild_id, user_id)
+        elif state.get("nickname") and state.get("rules"):
+            view = FinalView(guild_id, user_id)
+        elif state.get("nickname"):
+            view = RulesView(guild_id, user_id)
+        else:
+            view = IdentityView(guild_id, user_id)
+        await interaction.response.send_message(view=view, ephemeral=True)
 
 
 # Zone du pseudo relevée sur le screen de référence 744x429.
@@ -167,12 +185,15 @@ ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
 
 
 def _clean_ocr_name(raw: str) -> str:
-    name = re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ0-9 ._'\-]", "", raw or "")
-    name = re.sub(r"\s+", " ", name).strip(" ._-")
-    # Correction ciblée du préfixe de clan visible sur CET écran fixe : IV.
-    # La police du jeu fusionne visuellement I+V et Tesseract peut le lire
-    # comme Iv/IY mais aussi W, Ww ou Wv. On ne corrige que le PREMIER
-    # token suivi d'un espace, jamais un W présent dans le pseudo lui-même.
+    # Unicode natif : latin accentué, cyrillique, arabe, CJK, japonais, coréen…
+    allowed_punct = " ._'‑-"
+    chars = []
+    for ch in (raw or ""):
+        cat = unicodedata.category(ch)
+        if ch in allowed_punct or ch.isspace() or cat[0] in {"L", "N", "M"}:
+            chars.append(ch)
+    name = re.sub(r"\s+", " ", "".join(chars)).strip(" ._‑-")
+    # Correction ciblée du préfixe de clan IV, uniquement au début.
     if re.match(r"^[Ii][VvYy]\s+", name):
         name = "IV " + re.sub(r"^[Ii][VvYy]\s+", "", name)
     elif re.match(r"^[Ww]{1,2}\s+", name):
@@ -201,21 +222,33 @@ def _ocr_nickname(image_bytes: bytes) -> tuple[str, float]:
             if r > 150 and g > 95 and b < 145 and r > b * 1.35:
                 out[x, y] = 0
     mask = mask.resize((mask.width * 8, mask.height * 8))
-    data = pytesseract.image_to_data(mask, config="--psm 7", output_type=pytesseract.Output.DICT)
-    words, confs = [], []
-    for text, conf in zip(data.get("text", []), data.get("conf", [])):
-        text = (text or "").strip()
-        try:
-            c = float(conf)
-        except (TypeError, ValueError):
-            c = -1
-        if text:
-            words.append(text)
-            if c >= 0:
-                confs.append(c)
-    name = _clean_ocr_name(" ".join(words))
-    confidence = sum(confs) / len(confs) if confs else 0.0
-    return name, confidence
+    # On teste plusieurs familles d'écriture et on garde la lecture la plus sûre.
+    installed = set(pytesseract.get_languages(config=""))
+    groups = [
+        "eng+fra+deu+spa+por",
+        "rus+ukr",
+        "ara",
+        "chi_sim+jpn+kor",
+    ]
+    best = ("", 0.0)
+    for group in groups:
+        langs = [x for x in group.split("+") if x in installed]
+        if not langs:
+            continue
+        data = pytesseract.image_to_data(mask, lang="+".join(langs), config="--psm 7", output_type=pytesseract.Output.DICT)
+        words, confs = [], []
+        for text, conf in zip(data.get("text", []), data.get("conf", [])):
+            text = (text or "").strip()
+            try: c = float(conf)
+            except (TypeError, ValueError): c = -1
+            if text:
+                words.append(text)
+                if c >= 0: confs.append(c)
+        name = _clean_ocr_name(" ".join(words))
+        confidence = sum(confs) / len(confs) if confs else 0.0
+        if len(name) >= 2 and confidence > best[1]:
+            best = (name, confidence)
+    return best
 
 
 class AdminCorrectionModal(discord.ui.Modal, title="Corriger l'identité"):
@@ -243,9 +276,9 @@ class AdminCorrectionModal(discord.ui.Modal, title="Corriger l'identité"):
                 await member.edit(nick=name, reason=f"Correction onboarding par {interaction.user}")
             except (discord.Forbidden, discord.HTTPException):
                 await interaction.response.send_message("⚠️ Pseudo enregistré, mais Discord refuse le renommage.", ephemeral=True)
-                _save(self.guild_id, self.user_id, nickname=name)
+                _save(self.guild_id, self.user_id, nickname=name, review_status="verified")
                 return
-        _save(self.guild_id, self.user_id, nickname=name)
+        _save(self.guild_id, self.user_id, nickname=name, review_status="verified")
         await interaction.response.send_message(f"✅ Identité corrigée et validée : **{discord.utils.escape_markdown(name)}**.", ephemeral=True)
         try:
             await interaction.message.edit(view=None)
@@ -278,7 +311,7 @@ class AdminReviewView(discord.ui.View):
             except (discord.Forbidden, discord.HTTPException):
                 await interaction.response.send_message("⚠️ Discord refuse le renommage. Vérifie la hiérarchie des rôles.", ephemeral=True)
                 return
-        _save(self.guild_id, self.user_id, nickname=self.detected)
+        _save(self.guild_id, self.user_id, nickname=self.detected, review_status="verified")
         await interaction.response.send_message(f"✅ **{discord.utils.escape_markdown(self.detected)}** validé.", ephemeral=True)
         await interaction.message.edit(view=None)
 
@@ -288,6 +321,7 @@ class AdminReviewView(discord.ui.View):
 
     @discord.ui.button(label="Refuser", emoji="❌", style=discord.ButtonStyle.danger)
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+        _save(self.guild_id, self.user_id, nickname=None, review_status="rejected")
         await interaction.response.send_message("❌ Identification refusée. Le joueur devra renvoyer un screen.", ephemeral=True)
         await interaction.message.edit(view=None)
 
@@ -331,7 +365,7 @@ class OCRConfirmView(discord.ui.LayoutView):
                     await _alert_admins(interaction, "Discord refuse le renommage du membre", detected=self.nickname)
                     reason = "Discord nickname update failed. An administrator has been notified." if lang == "en" else "Le renommage Discord a échoué. Un administrateur a été prévenu."
                     await interaction.response.edit_message(view=IdentityErrorView(guild_id, user_id, reason)); return
-            _save(guild_id, user_id, nickname=self.nickname)
+            _save(guild_id, user_id, nickname=self.nickname, review_status="verified")
             await interaction.response.edit_message(view=RulesView(guild_id, user_id))
         async def retry_cb(interaction: discord.Interaction): await interaction.response.edit_message(view=IdentityView(guild_id, user_id))
         confirm.callback=confirm_cb; retry.callback=retry_cb
@@ -408,16 +442,73 @@ class ScreenUploadModal(discord.ui.Modal, title="Identification Althérya"):
             )
             return
         if len(nickname) < 2 or confidence < 45:
+            _save(self.guild_id, self.user_id, nickname=nickname or None, review_status="pending", ocr_confidence=confidence)
             await _alert_admins(interaction, "OCR incertain", image_bytes, nickname, confidence)
             await interaction.response.send_message(
                 view=IdentityErrorView(self.guild_id, self.user_id, ("The nickname could not be read with enough confidence." if _lang(self.guild_id, self.user_id) == "en" else "Le pseudo n'a pas pu être lu avec suffisamment de certitude.")),
                 ephemeral=True,
             )
             return
+        _save(self.guild_id, self.user_id, review_status="", ocr_confidence=confidence)
         await interaction.response.send_message(
             view=OCRConfirmView(self.guild_id, self.user_id, nickname),
             ephemeral=True,
         )
+
+
+class ReviewWaitingView(discord.ui.LayoutView):
+    """Écran de reprise lorsqu'un OCR douteux attend le staff."""
+    def __init__(self, guild_id: int, user_id: int):
+        super().__init__(timeout=1800)
+        lang = _lang(guild_id, user_id)
+        state = _state(guild_id, user_id)
+        title = "## 👮 IDENTITY UNDER REVIEW" if lang == "en" else "## 👮 IDENTITÉ À VÉRIFIER"
+        body = ("The detector is not certain enough. Your screenshot has been placed in **To review** for the staff.\n\nYou do not need to restart your registration."
+                if lang == "en" else "Le détecteur n'est pas suffisamment certain. Ton identification a été placée dans **À vérifier** pour le staff.\n\nTu n'as pas besoin de recommencer ton inscription.")
+        info = f"🔎 `{discord.utils.escape_markdown(state.get('nickname') or '—')}` • {state.get('ocr_confidence',0):.0f}%"
+        self.add_item(_container(discord.ui.TextDisplay(title), _sep(), discord.ui.TextDisplay(body), discord.ui.TextDisplay(info), _sep(), discord.ui.TextDisplay("**● ━ ◐ ━ ○**   Language • Identity • Rules" if lang == "en" else "**● ━ ◐ ━ ○**   Langue • Identité • Règlement")))
+
+
+def onboarding_admin_rows(guild_id: int, status: str | None = None):
+    rows = DB.execute("SELECT user_id,language,nickname,rules,completed,review_status,ocr_confidence FROM onboarding WHERE guild_id=? ORDER BY user_id DESC", (guild_id,)).fetchall()
+    out=[]
+    for r in rows:
+        item={"user_id":int(r[0]),"language":r[1],"nickname":r[2],"rules":bool(r[3]),"completed":bool(r[4]),"review_status":r[5] or "","confidence":float(r[6] or 0)}
+        cat = "review" if item["review_status"]=="pending" else ("completed" if item["completed"] else ("error" if item["review_status"]=="rejected" else "progress"))
+        item["category"]=cat
+        if status is None or status==cat: out.append(item)
+    return out
+
+
+def onboarding_admin_embed(guild: discord.Guild, category: str | None = None) -> discord.Embed:
+    all_rows=onboarding_admin_rows(guild.id)
+    counts={k:sum(1 for x in all_rows if x["category"]==k) for k in ("completed","progress","review","error")}
+    labels={"completed":"✅ Inscrits","progress":"⏳ En cours","review":"👮 À vérifier","error":"⚠️ Erreurs"}
+    e=discord.Embed(title="👮 ALTHÉRYA • CENTRE D’INSCRIPTIONS", description=f'✅ Inscrits **{counts["completed"]}**  •  ⏳ En cours **{counts["progress"]}**  •  👮 À vérifier **{counts["review"]}**  •  ⚠️ Erreurs **{counts["error"]}**', color=discord.Color.dark_gold())
+    if category:
+        rows=onboarding_admin_rows(guild.id,category)[:20]
+        lines=[]
+        for x in rows:
+            m=guild.get_member(x["user_id"]); who=m.mention if m else f'<@{x["user_id"]}>'
+            nick=discord.utils.escape_markdown(x["nickname"] or "—")
+            extra=f' • OCR {x["confidence"]:.0f}%' if category=="review" else ""
+            lines.append(f'• {who} — **{nick}**{extra}')
+        e.add_field(name=labels[category], value='\n'.join(lines) if lines else '*Aucun joueur.*', inline=False)
+    else:
+        e.add_field(name="Suivi", value="Utilise les boutons pour filtrer les inscriptions. Les OCR douteux arrivent automatiquement dans **À vérifier**.", inline=False)
+    return e
+
+
+class AdminOnboardingCenterView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=600)
+        for key,label,emoji in (("completed","Inscrits","✅"),("progress","En cours","⏳"),("review","À vérifier","👮"),("error","Erreurs","⚠️")):
+            b=discord.ui.Button(label=label,emoji=emoji,style=discord.ButtonStyle.danger if key=="review" else discord.ButtonStyle.secondary)
+            async def cb(i,k=key):
+                if not i.permissions.administrator:
+                    return await i.response.send_message("⛔ Réservé aux administrateurs.",ephemeral=True)
+                await i.response.edit_message(content=None,embed=onboarding_admin_embed(i.guild,k),view=AdminOnboardingCenterView())
+            b.callback=cb; self.add_item(b)
 
 
 class IdentityRetryView(discord.ui.View):
