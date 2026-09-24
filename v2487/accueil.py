@@ -1,4 +1,4 @@
-"""Altherya Accueil — onboarding Discord séparé du RPG.
+"""IV Accueil — onboarding Discord séparé du RPG.
 
 Chargé par main.py, mais toute la logique d'accueil reste isolée ici.
 Parcours : Langue -> Pseudo -> Règlement -> Entrer.
@@ -118,23 +118,23 @@ class WelcomePublicView(discord.ui.LayoutView):
         start.callback = self._start
 
         if lang == "en":
-            header = "# 👑  A L T H É R Y A\n### WELCOME TO THE KINGDOM"
-            intro = "A new adventure begins here.\n\nBefore the gates of Althérya open, prepare your arrival in **3 steps**."
+            header = "# 👑  I V\n### WELCOME TO THE IV SERVER"
+            intro = "Welcome to **IV**.\n\nBefore accessing the server, complete your arrival in **3 quick steps**."
             steps = (
                 "🌍 **Language**\nUse the 🇬🇧 **EN** button above to switch the welcome panel.\n\n"
                 "📸 **Identity**\nSend your Player Information screenshot: your nickname will be detected automatically.\n\n"
-                "📜 **Laws of the Kingdom**\nRead and accept the server rules."
+                "📜 **Server Rules**\nRead and accept the rules of IV."
             )
-            foot = "-# Althérya • The gates of the kingdom await your arrival."
+            foot = "-# IV • Your access to the server is almost ready."
         else:
-            header = "# 👑  A L T H É R Y A\n### BIENVENUE DANS LE ROYAUME"
-            intro = "Une nouvelle aventure commence ici.\n\nAvant que les portes d’Althérya ne s’ouvrent, prépare ton arrivée en **3 étapes**."
+            header = "# 👑  I V\n### BIENVENUE SUR LE SERVEUR IV"
+            intro = "Bienvenue sur **IV**.\n\nAvant d’accéder au serveur, prépare ton arrivée en **3 étapes rapides**."
             steps = (
                 "🌍 **Langue**\nUtilise le bouton 🇫🇷 **FR** ci-dessus pour changer la langue de l’accueil.\n\n"
                 "📸 **Identité**\nEnvoie ton screen Informations joueur : ton pseudo sera détecté automatiquement.\n\n"
-                "📜 **Lois du Royaume**\nPrends connaissance du règlement."
+                "📜 **Règlement du serveur**\nPrends connaissance des règles de IV."
             )
-            foot = "-# Althérya • Les portes du royaume attendent ton arrivée."
+            foot = "-# IV • Ton accès au serveur est presque prêt."
 
         self.lang = lang
         self.add_item(_container(
@@ -154,9 +154,9 @@ class WelcomePublicView(discord.ui.LayoutView):
         user_id = interaction.user.id
         if _state(guild_id, user_id)["completed"]:
             msg = (
-                "👑 Registration already completed. Welcome to Althérya!"
+                "👑 Registration already completed. Welcome to IV!"
                 if self.lang == "en"
-                else "👑 Ton inscription est déjà terminée. Bienvenue à Althérya !"
+                else "👑 Ton inscription est déjà terminée. Bienvenue sur IV !"
             )
             await interaction.response.send_message(msg, ephemeral=True)
             return
@@ -484,7 +484,7 @@ def onboarding_admin_embed(guild: discord.Guild, category: str | None = None) ->
     all_rows=onboarding_admin_rows(guild.id)
     counts={k:sum(1 for x in all_rows if x["category"]==k) for k in ("completed","progress","review","error")}
     labels={"completed":"✅ Inscrits","progress":"⏳ En cours","review":"👮 À vérifier","error":"⚠️ Erreurs"}
-    e=discord.Embed(title="👮 ALTHÉRYA • CENTRE D’INSCRIPTIONS", description=f'✅ Inscrits **{counts["completed"]}**  •  ⏳ En cours **{counts["progress"]}**  •  👮 À vérifier **{counts["review"]}**  •  ⚠️ Erreurs **{counts["error"]}**', color=discord.Color.dark_gold())
+    e=discord.Embed(title="👮 IV • CENTRE D’INSCRIPTIONS", description=f'✅ Inscrits **{counts["completed"]}**  •  ⏳ En cours **{counts["progress"]}**  •  👮 À vérifier **{counts["review"]}**  •  ⚠️ Erreurs **{counts["error"]}**', color=discord.Color.dark_gold())
     if category:
         rows=onboarding_admin_rows(guild.id,category)[:20]
         lines=[]
@@ -538,7 +538,7 @@ class IdentityView(discord.ui.LayoutView):
             await interaction.response.send_modal(ScreenUploadModal(guild_id,user_id))
         back.callback=back_cb; upload.callback=upload_cb
         title="## 📸 IDENTIFICATION\n**STEP 02 / 03**" if lang=="en" else "## 📸 IDENTIFICATION\n**ÉTAPE 02 / 03**"
-        body=("### Send your **Player Information** screenshot.\nPress **UPLOAD MY SCREEN**: Discord will open a window where you can select your screenshot.\n\nAlthérya will automatically analyse **only the nickname area**.\n-# Manual nickname entry is not allowed." if lang=="en" else "### Envoie ton screen **Informations joueur**.\nAppuie sur **ENVOYER MON SCREEN** : Discord ouvrira une petite fenêtre où tu pourras sélectionner ta capture.\n\nAlthérya analysera automatiquement **uniquement la zone du pseudo**.\n-# Aucune saisie manuelle du pseudo n'est autorisée.")
+        body=("### Send your **Player Information** screenshot.\nPress **UPLOAD MY SCREEN**: Discord will open a window where you can select your screenshot.\n\nIV will automatically analyse **only the nickname area**.\n-# Manual nickname entry is not allowed." if lang=="en" else "### Envoie ton screen **Informations joueur**.\nAppuie sur **ENVOYER MON SCREEN** : Discord ouvrira une petite fenêtre où tu pourras sélectionner ta capture.\n\nIV analysera automatiquement **uniquement la zone du pseudo**.\n-# Aucune saisie manuelle du pseudo n'est autorisée.")
         chosen="🌍 Selected language: **English**" if lang=="en" else "🌍 Langue choisie : **Français**"
         progress="**● ━ ● ━ ○**   Language • Identity • Rules" if lang=="en" else "**● ━ ● ━ ○**   Langue • Identité • Règlement"
         self.add_item(_container(discord.ui.TextDisplay(title),_sep(),discord.ui.TextDisplay(body),discord.ui.TextDisplay(chosen),_sep(),discord.ui.ActionRow(back,upload),_sep(),discord.ui.TextDisplay(progress)))
@@ -554,9 +554,9 @@ class RulesView(discord.ui.LayoutView):
         async def accept_cb(interaction): _save(_gid(interaction),interaction.user.id,rules=True); await interaction.response.edit_message(view=FinalView(_gid(interaction),interaction.user.id))
         back.callback=back_cb; accept.callback=accept_cb
         if lang=="en":
-            title="## 📜 LAWS OF THE KINGDOM\n**STEP 03 / 03**"; body="Every community needs a few rules.\n\n🤝 **Respect other members**\n💬 **Use each channel appropriately**\n🛡️ **Harassment and discrimination are forbidden**\n⚖️ **Respect moderation decisions**"; confirm="By continuing, you confirm that you have read and accepted the full server rules."; progress="**● ━ ● ━ ●**   Language • Identity • Rules"; rulelabel="VIEW THE RULES"
+            title="## 📜 SERVER RULES\n**STEP 03 / 03**"; body="Every community needs a few rules.\n\n🤝 **Respect other members**\n💬 **Use each channel appropriately**\n🛡️ **Harassment and discrimination are forbidden**\n⚖️ **Respect moderation decisions**"; confirm="By continuing, you confirm that you have read and accepted the full server rules."; progress="**● ━ ● ━ ●**   Language • Identity • Rules"; rulelabel="VIEW THE RULES"
         else:
-            title="## 📜 LES LOIS DU ROYAUME\n**ÉTAPE 03 / 03**"; body="Toute communauté a besoin de quelques règles.\n\n🤝 **Respecte les autres membres**\n💬 **Utilise chaque salon à bon escient**\n🛡️ **Harcèlement et discrimination interdits**\n⚖️ **Respecte les décisions de la modération**"; confirm="En continuant, tu confirmes avoir lu et accepté le règlement complet du serveur."; progress="**● ━ ● ━ ●**   Langue • Identité • Règlement"; rulelabel="VOIR LE RÈGLEMENT"
+            title="## 📜 RÈGLEMENT DU SERVEUR\n**ÉTAPE 03 / 03**"; body="Toute communauté a besoin de quelques règles.\n\n🤝 **Respecte les autres membres**\n💬 **Utilise chaque salon à bon escient**\n🛡️ **Harcèlement et discrimination interdits**\n⚖️ **Respecte les décisions de la modération**"; confirm="En continuant, tu confirmes avoir lu et accepté le règlement complet du serveur."; progress="**● ━ ● ━ ●**   Langue • Identité • Règlement"; rulelabel="VOIR LE RÈGLEMENT"
         components=[discord.ui.TextDisplay(title),_sep(),discord.ui.TextDisplay(body),_sep(),discord.ui.TextDisplay(confirm)]
         if rules_channel_id and guild_id: components.append(discord.ui.ActionRow(discord.ui.Button(label=rulelabel,emoji="📖",style=discord.ButtonStyle.link,url=f"https://discord.com/channels/{guild_id}/{rules_channel_id}")))
         components.extend([discord.ui.ActionRow(back,accept),_sep(),discord.ui.TextDisplay(progress)])
@@ -566,7 +566,7 @@ class RulesView(discord.ui.LayoutView):
 class FinalView(discord.ui.LayoutView):
     def __init__(self,guild_id:int,user_id:int):
         super().__init__(timeout=1800); state=_state(guild_id,user_id); lang=_lang(guild_id,user_id); nickname=discord.utils.escape_markdown(state["nickname"] or ("Adventurer" if lang=="en" else "Aventurier"))
-        enter=discord.ui.Button(label="ENTER THE KINGDOM" if lang=="en" else "ENTRER DANS LE ROYAUME",emoji="🏰",style=discord.ButtonStyle.success)
+        enter=discord.ui.Button(label="ENTER IV" if lang=="en" else "ENTRER SUR IV",emoji="🏰",style=discord.ButtonStyle.success)
         async def enter_cb(interaction):
             current=_state(_gid(interaction),interaction.user.id)
             if not(current["language"] and current["nickname"] and current["rules"]): await interaction.response.send_message("⚠️ Your registration is incomplete." if lang=="en" else "⚠️ Ton inscription est incomplète.",ephemeral=True); return
@@ -578,7 +578,7 @@ class FinalView(discord.ui.LayoutView):
                 try: await interaction.user.add_roles(role,reason="Onboarding Althérya terminé")
                 except discord.Forbidden: await interaction.response.send_message("⚠️ I cannot assign the Member role. Place my role above it." if lang=="en" else "⚠️ Je ne peux pas attribuer le rôle Membre. Place mon rôle au-dessus du rôle Membre.",ephemeral=True); return
             _save(_gid(interaction),interaction.user.id,completed=True)
-            done=discord.ui.LayoutView(timeout=300); txt=(f"# 👑 WELCOME, {discord.utils.escape_markdown(current['nickname'])}\n### The gates of the kingdom are open.\n\nYour adventure in **Althérya** can begin." if lang=="en" else f"# 👑 BIENVENUE, {discord.utils.escape_markdown(current['nickname'])}\n### Les portes du royaume sont ouvertes.\n\nTon aventure à **Althérya** peut commencer.")
+            done=discord.ui.LayoutView(timeout=300); txt=(f"# 👑 WELCOME, {discord.utils.escape_markdown(current['nickname'])}\n### Your access to **IV** is now open.\n\nWelcome to the server." if lang=="en" else f"# 👑 BIENVENUE, {discord.utils.escape_markdown(current['nickname'])}\n### Ton accès à **IV** est maintenant ouvert.\n\nBienvenue sur le serveur.")
             done.add_item(_container(discord.ui.TextDisplay(txt))); await interaction.response.edit_message(view=done)
         enter.callback=enter_cb
         if lang=="en": title=f"# 👑 WELCOME, {nickname}"; info=f"🌍 **English**\n✒️ **{nickname}**\n📜 **Rules accepted**"; body="### The gates are ready to open.\nYour adventure in Althérya can begin."
