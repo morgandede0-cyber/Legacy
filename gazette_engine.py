@@ -154,3 +154,76 @@ class GazetteStore:
             emoji, title, template = ALCOHOL_COPY[e['event_id']]
             items.append((f'{emoji} {title.upper()}', template.format(name=f"**{name_for(int(e['user_id']))}**")))
         return items
+
+# V2.50 — édition quotidienne façon véritable journal, avec article caché et archives figées.
+def _gazette_store_v250_init(self):
+    with self._connect() as c:
+        c.execute('''CREATE TABLE IF NOT EXISTS gazette_editions(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id INTEGER NOT NULL,
+            edition_day TEXT NOT NULL,
+            edition_number INTEGER NOT NULL,
+            headline TEXT NOT NULL,
+            article TEXT NOT NULL,
+            message_id INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            UNIQUE(guild_id, edition_day)
+        )''')
+        c.commit()
+
+def _gazette_store_next_number(self, guild_id: int) -> int:
+    with self._connect() as c:
+        row = c.execute('SELECT MAX(edition_number) n FROM gazette_editions WHERE guild_id=?', (int(guild_id),)).fetchone()
+    return int((row['n'] if row else 0) or 0) + 1
+
+def _gazette_store_save_edition(self, guild_id: int, day: str, number: int, headline: str, article: str) -> int:
+    with self._connect() as c:
+        c.execute('''INSERT OR IGNORE INTO gazette_editions(guild_id,edition_day,edition_number,headline,article,created_at)
+                     VALUES(?,?,?,?,?,?)''', (int(guild_id), str(day), int(number), str(headline), str(article), int(time.time())))
+        row = c.execute('SELECT id FROM gazette_editions WHERE guild_id=? AND edition_day=?', (int(guild_id), str(day))).fetchone()
+        c.commit()
+    return int(row['id'])
+
+def _gazette_store_bind_message(self, edition_id: int, message_id: int):
+    with self._connect() as c:
+        c.execute('UPDATE gazette_editions SET message_id=? WHERE id=?', (int(message_id), int(edition_id)))
+        c.commit()
+
+def _gazette_store_edition_by_message(self, message_id: int):
+    with self._connect() as c:
+        row = c.execute('SELECT * FROM gazette_editions WHERE message_id=?', (int(message_id),)).fetchone()
+    return dict(row) if row else None
+
+def _gazette_store_daily_stats(self, since_ts: int, until_ts: int, name_for):
+    casino = self.casino_net(since_ts, until_ts)
+    world = self.world_events(since_ts, until_ts)
+    alcohol = self.alcohol_events(since_ts, until_ts)
+    winners = [r for r in casino if int(r.get('net') or 0) > 0]
+    losers = [r for r in casino if int(r.get('net') or 0) < 0]
+    winner = max(winners, key=lambda r: int(r.get('net') or 0)) if winners else None
+    loser = min(losers, key=lambda r: int(r.get('net') or 0)) if losers else None
+
+    # Joueur du jour : activité marquante, sans confondre richesse et mérite.
+    score = {}
+    weights = {'champion_10': 12, 'ashkar_boss': 10, 'ashkar_record': 8, 'legendary_forge': 7, 'champion_5': 6, 'level_milestone': 4}
+    for e in world:
+        uid = int(e['user_id']); score[uid] = score.get(uid, 0) + weights.get(str(e['event_type']), 2)
+    for r in casino:
+        uid = int(r['user_id']); score[uid] = score.get(uid, 0) + min(4, int(r.get('games') or 0) // 3)
+    for e in alcohol:
+        uid = int(e['user_id']); score[uid] = score.get(uid, 0) + 1
+    star_uid = max(score, key=score.get) if score else None
+    return {
+        'winner': ({**winner, 'name': name_for(int(winner['user_id']))} if winner else None),
+        'loser': ({**loser, 'name': name_for(int(loser['user_id']))} if loser else None),
+        'star': ({'user_id': star_uid, 'name': name_for(star_uid), 'score': score[star_uid]} if star_uid else None),
+        'world': world, 'alcohol': alcohol,
+        'casino_games': sum(int(r.get('games') or 0) for r in casino),
+    }
+
+GazetteStore.init_daily_editions = _gazette_store_v250_init
+GazetteStore.next_edition_number = _gazette_store_next_number
+GazetteStore.save_edition = _gazette_store_save_edition
+GazetteStore.bind_edition_message = _gazette_store_bind_message
+GazetteStore.edition_by_message = _gazette_store_edition_by_message
+GazetteStore.daily_stats = _gazette_store_daily_stats

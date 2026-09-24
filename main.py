@@ -151,6 +151,7 @@ ADMIN_STORE = AdminStore(DATA / "legacy.sqlite3")
 TAVERN_STORE = TavernGameStore(DATA / "legacy.sqlite3")
 STORY_STORE = StoryStore(DATA / "legacy.sqlite3")
 GAZETTE_STORE = GazetteStore(DATA / "legacy.sqlite3")
+GAZETTE_STORE.init_daily_editions()
 JOB_BOARD_STORE = JobBoardStore(DATA / "legacy.sqlite3")
 RECOVERED_CASINO_GAMES = CASINO_STORE.recover_unfinished()
 RECOVERED_ARENA_BATTLES = ARENA_STORE.recover_unfinished()
@@ -6773,58 +6774,122 @@ async def logs_error(interaction: discord.Interaction, error: app_commands.AppCo
 
 
 
-async def publish_gazette(guild: discord.Guild, config: dict, now_ts: int | None = None) -> bool:
-    """Publie uniquement des faits réellement présents dans la BDD Altherya."""
-    now_ts = int(now_ts or __import__('time').time())
-    since_ts = int(config.get('last_published_at') or (now_ts - 24 * 3600))
-    channel_id = int(config['channel_id'])
-    try:
-        channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
-    except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError):
-        return False
+_GAZETTE_MONTHS = ("janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre")
+_GAZETTE_LOSER_JOKES = (
+    "La Banque confirme que son portefeuille demande désormais l’asile politique.",
+    "Nos journalistes ont cherché sa stratégie. L’enquête est toujours au point mort.",
+    "Même le Vigile a hésité à lui réclamer 150 Gold par compassion.",
+    "La maison le remercie chaleureusement pour sa généreuse contribution involontaire.",
+    "À ce rythme, sa bourse va bientôt être classée monument historique : vide, mais remarquable.",
+)
 
-    member_cache = {}
-    def name_for(uid: int) -> str:
-        if uid in member_cache:
-            return member_cache[uid]
-        member = guild.get_member(uid)
-        name = member.display_name if member else f"Habitant #{str(uid)[-4:]}"
-        member_cache[uid] = name
-        return name
+def _gazette_date_fr(dt: datetime) -> str:
+    return f"{dt.day} {_GAZETTE_MONTHS[dt.month-1]} {dt.year}".upper()
 
-    items = GAZETTE_STORE.build_items(since_ts, now_ts, name_for, max_alcohol=4)
-    embed = discord.Embed(
-        title="📰 LA GAZETTE DE LEGACY",
-        description="*Les nouvelles réellement survenues dans les Trois Terres depuis la dernière édition.*",
-        color=discord.Color.from_rgb(176, 132, 67),
-    )
-    if not items:
-        embed.add_field(name="🌤️ Une journée étonnamment calme", value="Aucun fait suffisamment marquant n'a été enregistré depuis la dernière édition.", inline=False)
+def _gazette_event_line(event: dict, name_for) -> str | None:
+    name=name_for(int(event['user_id'])); kind=str(event['event_type']); value=int(event.get('value') or 0); detail=str(event.get('detail') or '')
+    if kind=='ashkar_boss': return f"🗼 **{name}** a terrassé Varkhaz au 10e étage d’Ashkar."
+    if kind=='ashkar_record': return f"📈 **{name}** a porté le record d’Ashkar à l’étage **{value}**."
+    if kind=='legendary_forge': return f"🔨 **{name}** a forgé {detail or 'un équipement'} de qualité Légendaire."
+    if kind=='champion_5': return f"⚔️ **{name}** a vaincu le Champion V de l’Arène."
+    if kind=='champion_10': return f"👑 **{name}** a terrassé le Champion X."
+    if kind=='level_milestone': return f"⭐ **{name}** a atteint le niveau **{value}**."
+    return None
+
+def _build_daily_gazette(stats: dict, name_for, edition_number: int, now: datetime):
+    star=stats['star']; winner=stats['winner']; loser=stats['loser']; world=stats['world']
+    if star:
+        headline=f"{star['name'].upper()} MARQUE LA JOURNÉE"
+    elif winner:
+        headline="UNE FORTUNE S’EST CONSTRUITE AUJOURD’HUI"
+    elif loser:
+        headline="LE CASINO A ENCORE TROUVÉ UN MÉCÈNE"
     else:
-        for title, text in items[:7]:
-            embed.add_field(name=title, value=text, inline=False)
-    embed.set_footer(text="Altherya • Gazette quotidienne • Aucun événement inventé")
-    try:
-        await channel.send(embed=embed)
-        GAZETTE_STORE.mark_published(guild.id, datetime.now().date().isoformat(), now_ts)
-        return True
-    except (discord.Forbidden, discord.HTTPException):
-        return False
+        headline="LE ROYAUME PROFITE D’UNE JOURNÉE CALME"
 
+    parts=[]
+    if star:
+        parts.append(f"👑 **LE JOUEUR DU JOUR**\n**{star['name']}** s’est particulièrement illustré aujourd’hui dans le royaume.")
+    if winner:
+        net=int(winner['net'])
+        parts.append(f"💰 **LE PLUS GROS GAGNANT**\n**{winner['name']}** termine en tête avec **+{net:,} Gold** nets. Une bourse qui respire mieux ce soir.".replace(',', ' '))
+    if loser:
+        net=abs(int(loser['net'])); joke=_GAZETTE_LOSER_JOKES[(edition_number-1) % len(_GAZETTE_LOSER_JOKES)]
+        parts.append(f"🤡 **LE PLUS GROS PERDANT**\n**{loser['name']}** abandonne **{net:,} Gold** nets. {joke}".replace(',', ' '))
+    ev=[]
+    seen=set()
+    for e in world:
+        line=_gazette_event_line(e,name_for)
+        if line and line not in seen:
+            seen.add(line); ev.append(line)
+        if len(ev)>=4: break
+    if ev:
+        parts.append("⚔️ **LES FAITS DU JOUR**\n" + "\n".join(f"• {x}" for x in ev))
+    if stats['casino_games']:
+        parts.append(f"📊 **EN BREF**\n🎰 **{stats['casino_games']}** partie{'s' if stats['casino_games'] != 1 else ''} enregistrée{'s' if stats['casino_games'] != 1 else ''} à la Taverne aujourd’hui.")
+    if not parts:
+        parts.append("🌤️ **RIEN À SIGNALER**\nAucun événement suffisamment marquant n’a été enregistré aujourd’hui. Les taverniers parlent d’un miracle. Profitez-en : à Althérya, le calme dure rarement.")
+    article=(f"📰 **LA GAZETTE D’ALTHÉRYA — ÉDITION N°{edition_number:03d}**\n"
+             f"*{_gazette_date_fr(now)}*\n\n" + "\n\n━━━━━━━━━━━━━━━━━━━━\n\n".join(parts))
+    return headline, article
+
+class GazetteDailyView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        b=discord.ui.Button(label="LIRE L’ARTICLE", emoji="📰", style=discord.ButtonStyle.secondary, custom_id="altherya:gazette:daily:read")
+        async def read_article(i: discord.Interaction):
+            if not i.message:
+                await i.response.send_message("❌ Cette édition est introuvable.", ephemeral=True); return
+            edition=GAZETTE_STORE.edition_by_message(i.message.id)
+            if not edition:
+                await i.response.send_message("❌ Les archives de cette édition sont introuvables.", ephemeral=True); return
+            # L'article est volontairement privé : la Une publique reste courte et propre.
+            await i.response.send_message(edition['article'], ephemeral=True)
+        b.callback=read_article; self.add_item(b)
+
+async def publish_gazette(guild: discord.Guild, config: dict, now_ts: int | None = None) -> bool:
+    """V2.50 : une courte publique + article caché, figé dans les archives."""
+    now_ts=int(now_ts or __import__('time').time()); now=datetime.fromtimestamp(now_ts)
+    since_ts=int(config.get('last_published_at') or (now_ts-24*3600)); channel_id=int(config['channel_id'])
+    try: channel=bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
+    except (discord.NotFound,discord.Forbidden,discord.HTTPException,ValueError,TypeError): return False
+    member_cache={}
+    def name_for(uid:int)->str:
+        if uid not in member_cache:
+            m=guild.get_member(uid); member_cache[uid]=m.display_name if m else f"Habitant #{str(uid)[-4:]}"
+        return member_cache[uid]
+    day=now.date().isoformat(); number=GAZETTE_STORE.next_edition_number(guild.id)
+    stats=GAZETTE_STORE.daily_stats(since_ts,now_ts,name_for)
+    headline,article=_build_daily_gazette(stats,name_for,number,now)
+    edition_id=GAZETTE_STORE.save_edition(guild.id,day,number,headline,article)
+    embed=discord.Embed(
+        title="📰  LA GAZETTE D’ALTHÉRYA",
+        description=(f"**ÉDITION N°{number:03d}  •  {_gazette_date_fr(now)}**\n"
+                     "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                     "### ⚔️ À LA UNE\n"
+                     f"## {headline}\n\n"
+                     "Richesses, exploits, catastrophes et rumeurs du royaume.\n"
+                     "**L’article complet reste sous presse jusqu’à votre clic.**\n\n"
+                     "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                     "*Le quotidien des habitants d’Althérya.*"),
+        color=discord.Color.from_rgb(176,132,67))
+    embed.set_footer(text="Althérya • Gazette quotidienne")
+    try:
+        msg=await channel.send(embed=embed,view=GazetteDailyView())
+        GAZETTE_STORE.bind_edition_message(edition_id,msg.id)
+        GAZETTE_STORE.mark_published(guild.id,day,now_ts)
+        return True
+    except (discord.Forbidden,discord.HTTPException): return False
 
 @tasks.loop(seconds=30)
 async def gazette_clock():
-    # Heure locale de la machine serveur, conformément au reste de Altherya : aucune dépendance timezone.
-    now = datetime.now()
-    if now.hour < 9:
-        return
-    today = now.date().isoformat()
+    now=datetime.now()
+    if now.hour < 9: return
+    today=now.date().isoformat()
     for config in GAZETTE_STORE.configs():
-        if str(config.get('last_published_day') or '') == today:
-            continue
-        guild = bot.get_guild(int(config['guild_id']))
-        if guild is not None:
-            await publish_gazette(guild, config)
+        if str(config.get('last_published_day') or '')==today: continue
+        guild=bot.get_guild(int(config['guild_id']))
+        if guild is not None: await publish_gazette(guild,config)
 
 
 @gazette_clock.before_loop
@@ -6844,7 +6909,7 @@ async def gazette(interaction: discord.Interaction):
         "🕘 Une édition sera publiée automatiquement **tous les jours à 09:00 (heure locale du serveur)**.\n"
         "📌 La Gazette utilisera uniquement des événements réellement enregistrés par Altherya.", ephemeral=True)
     embed = discord.Embed(title="📰 La Gazette de Altherya s'installe ici !",
-                          description="Dès demain matin, retrouvez les exploits, catastrophes et lendemains difficiles des habitants de Altherya.",
+                          description="Dès demain matin, retrouvez la Une du royaume. L’article complet restera caché derrière le bouton 📰 LIRE L’ARTICLE.",
                           color=discord.Color.from_rgb(176,132,67))
     embed.set_footer(text="Rendez-vous à 09:00")
     await interaction.channel.send(embed=embed)
@@ -7397,6 +7462,7 @@ async def on_ready():
             start_expedition_monitor(run.run_id)
 
     bot.add_view(DisplayModeSelectView())
+    bot.add_view(GazetteDailyView())
     if not gazette_clock.is_running():
         gazette_clock.start()
     # HubView = CityHubV2 (LayoutView) : construit à la demande, ne pas enregistrer via add_view().
