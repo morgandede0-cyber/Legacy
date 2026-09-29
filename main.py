@@ -781,65 +781,51 @@ class _TutorialBase(discord.ui.LayoutView):
             return False
         return True
 
-    async def _elyndor(self, interaction: discord.Interaction):
-        if self.mode=="mobile":
-            await interaction.response.edit_message(content=None,attachments=[],view=MobileWorldView(interaction.user.id))
-        else:
-            file=discord.File(WORLD_FORGE.WORLD_MAP,filename="elyndor_map.png")
-            await interaction.response.edit_message(content=None,attachments=[file],view=WorldHubV2(private_session=True))
-
 
 class TutorialIntroView(_TutorialBase):
     def __init__(self, owner_id:int, mode:str, replay:bool=False):
         super().__init__(owner_id,mode)
-        start=discord.ui.Button(label="Commencer",emoji="⚔️",style=discord.ButtonStyle.primary,custom_id=f"altherya:v256:tutorial:start:{mode}")
+        start=discord.ui.Button(label="Commencer",emoji="⚔️",style=discord.ButtonStyle.primary,custom_id=f"altherya:v258:tutorial:start:{mode}")
         async def start_cb(i):
-            await i.response.edit_message(attachments=[],view=TutorialMoveView(self.owner_id,self.mode))
+            await i.response.edit_message(attachments=[],view=TutorialNavigationView(self.owner_id,self.mode))
         start.callback=start_cb
-        note=("Tu as déjà reçu la récompense de bienvenue. Refaire le tutoriel ne donnera **aucun Gold ni XP supplémentaire**."
+        note=("🔒 **Récompense déjà obtenue** — tu peux refaire librement le tutoriel, sans nouveau gain."
               if replay or TUTORIAL_STORE.reward_claimed(owner_id)
-              else "Une petite récompense de bienvenue t'attend à la fin de ton premier parcours.")
+              else f"🎁 **Premier parcours :** {TUTORIAL_GOLD} Gold + {TUTORIAL_XP} XP à la fin.")
         panel=v2_container(
-            v2_header("🌫️ AUX PORTES D'ELYNDOR","Un garde barre encore le passage vers le royaume."),
+            v2_header("🌫️ AUX PORTES D'ELYNDOR","Quelques minutes pour apprendre à survivre dans le royaume."),
             v2_separator(True),
             discord.ui.TextDisplay(
-                "**Garde :** « Première fois à Elyndor ? Alors écoute bien. Ici, chaque décision peut avoir son importance. »\\n\\n"
-                "Ce court prologue te montre uniquement les bases. Le reste du royaume se découvre en jouant.\\n\\n"
-                f"🎁 {note}"
+                "**Garde :** « Première fois à Elyndor ? Je vais t'éviter de tourner en rond pendant trois jours. »\n\n"
+                "Tu vas apprendre à **te déplacer**, **faire progresser ton personnage**, **gagner tes premiers Gold** "
+                "et surtout savoir **quoi faire en arrivant**.\n\n"
+                f"{note}"
             ),
             v2_action_row(start),colour=0xB67A2A
         )
         self.add_item(panel)
 
 
-class TutorialMoveView(_TutorialBase):
+class TutorialNavigationView(_TutorialBase):
     def __init__(self,owner_id:int,mode:str):
         super().__init__(owner_id,mode)
-        go=discord.ui.Button(label="Marché",emoji="🛒",style=discord.ButtonStyle.primary,custom_id=f"altherya:v256:tutorial:market:{mode}")
-        async def go_cb(i):
-            await i.response.edit_message(attachments=[],view=TutorialInteractView(self.owner_id,self.mode))
-        go.callback=go_cb
-        panel=v2_container(
-            v2_header("🧭 1/4 — SE DÉPLACER","Chaque lieu d'Elyndor possède ses propres activités."),
-            v2_separator(True),
-            discord.ui.TextDisplay("**Garde :** « Commence par rejoindre le Marché. Utilise les boutons de destination pour voyager. »"),
-            v2_action_row(go),colour=0xB67A2A
-        )
-        self.add_item(panel)
-
-
-class TutorialInteractView(_TutorialBase):
-    def __init__(self,owner_id:int,mode:str):
-        super().__init__(owner_id,mode)
-        talk=discord.ui.Button(label="Parler au marchand",emoji="💬",style=discord.ButtonStyle.success,custom_id=f"altherya:v256:tutorial:talk:{mode}")
-        async def talk_cb(i):
+        nxt=discord.ui.Button(label="Continuer",emoji="➡️",style=discord.ButtonStyle.primary,custom_id=f"altherya:v258:tutorial:nav:{mode}")
+        async def nxt_cb(i):
             await i.response.edit_message(attachments=[],view=TutorialProfileView(self.owner_id,self.mode))
-        talk.callback=talk_cb
+        nxt.callback=nxt_cb
         panel=v2_container(
-            v2_header("🛒 2/4 — INTERAGIR","Tu arrives devant l'étal d'un marchand."),
+            v2_header("🧭 1/5 — SE REPÉRER","Elyndor est ton point de départ."),
             v2_separator(True),
-            discord.ui.TextDisplay("**Marchand :** « À Elyndor, observe toujours les actions proposées. Elles changent selon le lieu où tu te trouves. »"),
-            v2_action_row(talk),colour=0xB67A2A
+            discord.ui.TextDisplay(
+                "🏰 **Elyndor** — le cœur de ton aventure et l'accès aux activités.\n"
+                "🌍 **Monde** — permet de rejoindre les destinations extérieures.\n"
+                "↩️ **Retour** — ramène à l'écran précédent sans perdre ta progression.\n\n"
+                "📱 **Mobile** utilise des écrans plus compacts.\n"
+                "🖥️ **PC** affiche davantage d'informations à la fois.\n\n"
+                "💡 **Conseil :** ne cherche pas à tout faire immédiatement. Commence par les activités accessibles, "
+                "gagne quelques niveaux et de nouvelles possibilités apparaîtront."
+            ),
+            v2_action_row(nxt),colour=0xB67A2A
         )
         self.add_item(panel)
 
@@ -847,19 +833,78 @@ class TutorialInteractView(_TutorialBase):
 class TutorialProfileView(_TutorialBase):
     def __init__(self,owner_id:int,mode:str):
         super().__init__(owner_id,mode)
-        nxt=discord.ui.Button(label="J'ai compris",emoji="✅",style=discord.ButtonStyle.primary,custom_id=f"altherya:v256:tutorial:profile:{mode}")
+        nxt=discord.ui.Button(label="Compris",emoji="✅",style=discord.ButtonStyle.primary,custom_id=f"altherya:v258:tutorial:profile:{mode}")
+        async def nxt_cb(i):
+            await i.response.edit_message(attachments=[],view=TutorialStartView(self.owner_id,self.mode))
+        nxt.callback=nxt_cb
+        panel=v2_container(
+            v2_header("👤 2/5 — TON PERSONNAGE","Les informations qui comptent vraiment."),
+            v2_separator(True),
+            discord.ui.TextDisplay(
+                "### ❤️ Survie\n"
+                "**PV** — tes points de vie pendant les combats.\n\n"
+                "### ⭐ Progression\n"
+                "**Niveau** — débloque progressivement le contenu.\n"
+                "**XP** — gagnée en jouant réellement : expéditions, annonces, combats, jeux et autres activités.\n\n"
+                "### 💰 Ressources\n"
+                "**Gold** — monnaie principale pour acheter, jouer et progresser.\n"
+                "**Pouciel** — ressource utilisée notamment pour la Forge.\n\n"
+                "### 🎒 Personnage\n"
+                "**Inventaire** — conserve tes objets et ressources.\n"
+                "**Équipement** — améliore ton personnage et certaines activités.\n"
+                "**Réputations** — tes actions influencent la manière dont certains habitants d'Elyndor te considèrent."
+            ),
+            v2_action_row(nxt),colour=0xB67A2A
+        )
+        self.add_item(panel)
+
+
+class TutorialStartView(_TutorialBase):
+    def __init__(self,owner_id:int,mode:str):
+        super().__init__(owner_id,mode)
+        nxt=discord.ui.Button(label="Voir les lieux",emoji="🏰",style=discord.ButtonStyle.primary,custom_id=f"altherya:v258:tutorial:startguide:{mode}")
+        async def nxt_cb(i):
+            await i.response.edit_message(attachments=[],view=TutorialPlacesView(self.owner_id,self.mode))
+        nxt.callback=nxt_cb
+        panel=v2_container(
+            v2_header("🚀 3/5 — BIEN DÉMARRER","Un itinéraire simple pour tes premières minutes."),
+            v2_separator(True),
+            discord.ui.TextDisplay(
+                "**1. 🎁 Récupère ta récompense journalière** à la Banque.\n"
+                "**2. 🌿 Lance une expédition mains nues** : aucun équipement n'est nécessaire pour commencer.\n"
+                "**3. 📜 Consulte les Petites Annonces** pour trouver un contrat adapté.\n"
+                "**4. 🍺 Passe à la Taverne** pour découvrir ses activités et gagner un peu d'XP.\n"
+                "**5. ⚔️ Essaie l'Arène** quand tu veux tester ton personnage.\n\n"
+                "⭐ Les activités utiles donnent de l'**XP**. Au début, les niveaux arrivent rapidement : "
+                "inutile d'attendre plusieurs jours avant de progresser.\n\n"
+                "💡 **Si tu ne sais plus quoi faire :** cherche une activité disponible, une annonce ou une expédition."
+            ),
+            v2_action_row(nxt),colour=0xB67A2A
+        )
+        self.add_item(panel)
+
+
+class TutorialPlacesView(_TutorialBase):
+    def __init__(self,owner_id:int,mode:str):
+        super().__init__(owner_id,mode)
+        nxt=discord.ui.Button(label="Dernière étape",emoji="➡️",style=discord.ButtonStyle.primary,custom_id=f"altherya:v258:tutorial:places:{mode}")
         async def nxt_cb(i):
             await i.response.edit_message(attachments=[],view=TutorialRewardView(self.owner_id,self.mode))
         nxt.callback=nxt_cb
         panel=v2_container(
-            v2_header("👤 3/4 — TON PERSONNAGE","Les cinq informations à retenir."),
+            v2_header("🏘️ 4/5 — LES LIEUX À CONNAÎTRE","Pas besoin de tout mémoriser."),
             v2_separator(True),
             discord.ui.TextDisplay(
-                "❤️ **PV** — ta résistance au combat\\n"
-                "⭐ **Niveau / XP** — ta progression\\n"
-                "🪙 **Gold** — ta monnaie principale\\n"
-                "🎭 **Réputations** — la façon dont Elyndor te perçoit\\n"
-                "🎒 **Inventaire** — tes objets et ressources"
+                "🏦 **Banque** — récompense journalière et gestion de tes Gold.\n"
+                "🛒 **Marché** — commerces et ressources utiles.\n"
+                "🍺 **Taverne** — jeux et activités accessibles rapidement.\n"
+                "📜 **Petites Annonces** — contrats et récompenses.\n"
+                "⚔️ **Arène** — combats et progression.\n"
+                "🔨 **Forge** — amélioration de ton équipement.\n"
+                "🗼 **Tour d'Ashkar** — contenu de combat qui se débloque au **niveau 5**.\n"
+                "🌑 **Ruelle sombre** — activités plus risquées, avec leurs propres conséquences.\n\n"
+                "🔓 Certains contenus sont volontairement verrouillés au début. **Ce n'est pas un bug** : "
+                "continue simplement à gagner de l'XP et à développer ton personnage."
             ),
             v2_action_row(nxt),colour=0xB67A2A
         )
@@ -869,43 +914,55 @@ class TutorialProfileView(_TutorialBase):
 class TutorialRewardView(_TutorialBase):
     def __init__(self,owner_id:int,mode:str):
         super().__init__(owner_id,mode)
-        finish=discord.ui.Button(label="Terminer le tutoriel",emoji="🎁",style=discord.ButtonStyle.success,custom_id=f"altherya:v256:tutorial:finish:{mode}")
+        finish=discord.ui.Button(label="Entrer dans Elyndor",emoji="🏰",style=discord.ButtonStyle.success,custom_id=f"altherya:v258:tutorial:finish:{mode}")
         async def finish_cb(i):
             await safe_defer(i, ephemeral=True)
             try:
                 result=TUTORIAL_STORE.finish_and_reward(i.user.id)
-                # Synchronise le niveau d'expédition avec l'XP désormais persistée.
                 CASTLE_STORE.ensure(i.user.id)
                 with CASTLE_STORE._c() as c:
                     CASTLE_STORE._sync_level(c,i.user.id); c.commit()
             except Exception as exc:
                 print(f"[TUTORIEL] récompense impossible user={i.user.id}: {exc}")
-                return await i.followup.send("❌ La fin du tutoriel n'a pas pu être enregistrée. Réessaie : aucune récompense ne sera doublée.",ephemeral=True)
+                return await i.followup.send(
+                    "❌ La fin du tutoriel n'a pas pu être enregistrée. Réessaie : aucune récompense ne sera doublée.",
+                    ephemeral=True
+                )
 
             if result["first_reward"]:
-                msg=(f"🎁 **Récompense de bienvenue reçue**\\n"
-                     f"🪙 +**{result['gold']} Gold**\\n⭐ +**{result['xp']} XP**\\n\\n"
-                     "Cette récompense est définitivement marquée comme récupérée.")
+                msg=(f"🎁 **Récompense de bienvenue reçue**\n"
+                     f"🪙 +**{result['gold']} Gold**\n"
+                     f"⭐ +**{result['xp']} XP**\n\n"
+                     "Ta récompense de tutoriel est maintenant enregistrée définitivement.")
             else:
-                msg=("📖 **Tutoriel terminé à nouveau.**\\n"
-                     "Ta récompense de bienvenue avait déjà été récupérée : aucun Gold ni XP supplémentaire n'a été ajouté.")
+                msg=("📖 **Tutoriel terminé.**\n"
+                     "Tu avais déjà récupéré la récompense de bienvenue : aucun Gold ni XP supplémentaire n'a été ajouté.")
             await i.followup.send(msg,ephemeral=True)
-            # Le defer empêche edit_message via response; on édite la fenêtre originale.
+
             if self.mode=="mobile":
                 await i.edit_original_response(content=None,attachments=[],view=MobileWorldView(i.user.id))
             else:
                 file=discord.File(WORLD_FORGE.WORLD_MAP,filename="elyndor_map.png")
                 await i.edit_original_response(content=None,attachments=[file],view=WorldHubV2(private_session=True))
         finish.callback=finish_cb
+
         already=TUTORIAL_STORE.reward_claimed(owner_id)
-        reward=("Tu as déjà récupéré cette récompense. Cette étape terminera seulement le tutoriel."
-                if already else f"Pour ton premier passage : **{TUTORIAL_GOLD} Gold** et **{TUTORIAL_XP} XP**.")
+        reward=("🔒 **Récompense déjà récupérée.** Refaire le tutoriel ne modifie ni ton Gold ni ton XP."
+                if already else f"🎁 **Récompense de bienvenue :** {TUTORIAL_GOLD} Gold + {TUTORIAL_XP} XP.")
         panel=v2_container(
-            v2_header("🏰 4/4 — LES PORTES S'OUVRENT","Le garde s'écarte enfin."),
+            v2_header("🏰 5/5 — PRÊT POUR ELYNDOR","Tu connais maintenant l'essentiel."),
             v2_separator(True),
             discord.ui.TextDisplay(
-                "**Garde :** « C'est tout ce que tu as besoin de savoir. Le reste... tu le découvriras toi-même. »\\n\\n"
-                f"🎁 {reward}"
+                "### 🧭 Si tu es perdu\n"
+                "Commence par **Banque → Expédition → Petites Annonces → Taverne**. "
+                "Ces activités te donnent rapidement une direction et de l'XP.\n\n"
+                "### ⚠️ À retenir\n"
+                "• Les niveaux débloquent progressivement le contenu.\n"
+                "• Tes Gold sont précieux : évite de tout risquer immédiatement au Casino.\n"
+                "• Les activités de la Ruelle peuvent être plus dangereuses.\n"
+                "• Tu peux refaire ce tutoriel plus tard depuis Elyndor.\n\n"
+                f"{reward}\n\n"
+                "**Garde :** « Les portes sont ouvertes. Maintenant, écris ta propre histoire. »"
             ),
             v2_action_row(finish),colour=0xB67A2A
         )
