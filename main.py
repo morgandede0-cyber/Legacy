@@ -52,6 +52,7 @@ from world_engine import current_event, destination_name, destination_descriptio
 from ui_v2 import container as v2_container, header as v2_header, separator as v2_separator, media_gallery as v2_media_gallery, action_row as v2_action_row
 import display_mode as DISPLAY_MODE
 from sentinel import AltheryaSentinel
+from tutorial_engine import TutorialStore, TUTORIAL_GOLD, TUTORIAL_XP
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 GUILD_ID = os.getenv("GUILD_ID", "").strip()
 PLACES = BASE / "assets" / "places"
@@ -157,6 +158,7 @@ STORY_STORE = StoryStore(DATA / "legacy.sqlite3")
 GAZETTE_STORE = GazetteStore(DATA / "legacy.sqlite3")
 GAZETTE_STORE.init_daily_editions()
 JOB_BOARD_STORE = JobBoardStore(DATA / "legacy.sqlite3")
+TUTORIAL_STORE = TutorialStore(DATA / "legacy.sqlite3")
 RECOVERED_CASINO_GAMES = CASINO_STORE.recover_unfinished()
 RECOVERED_ARENA_BATTLES = ARENA_STORE.recover_unfinished()
 RECOVERED_TAVERN_GAMES = TAVERN_STORE.recover_unfinished()
@@ -606,6 +608,25 @@ class WorldHubV2(discord.ui.LayoutView):
             panel.add_item(discord.ui.Section(f"### {title}\n{desc}", accessory=b))
             if key != specs[-1][0]:
                 panel.add_item(v2_separator())
+
+        panel.add_item(v2_separator(True))
+        tutorial = discord.ui.Button(
+            label="Refaire le tutoriel", emoji="📖",
+            style=discord.ButtonStyle.secondary,
+            custom_id="altherya:v256:tutorial:replay_pc",
+        )
+        async def tutorial_cb(interaction: discord.Interaction):
+            _set_display_mode(interaction.user.id, "pc")
+            TUTORIAL_STORE.start(interaction.user.id)
+            await interaction.response.edit_message(
+                content=None, attachments=[],
+                view=TutorialIntroView(interaction.user.id, "pc", replay=True)
+            )
+        tutorial.callback = tutorial_cb
+        panel.add_item(discord.ui.Section(
+            "### 📖 Tutoriel\nRevoir les bases d'Elyndor. La récompense de bienvenue n'est donnée qu'une seule fois.",
+            accessory=tutorial,
+        ))
         self.add_item(panel)
 
 
@@ -738,7 +759,158 @@ class MobileCityView(discord.ui.LayoutView):
         async def world_cb(i): await i.response.edit_message(attachments=[],view=MobileWorldView(i.user.id))
         world.callback=world_cb
         panel.add_item(v2_separator(True)); panel.add_item(discord.ui.Section("### 🌍 Quitter la cité\nRetourne à la carte du monde d'Elyndor.",accessory=world))
+        tutorial=discord.ui.Button(label="Refaire le tutoriel",emoji="📖",style=discord.ButtonStyle.secondary,custom_id="altherya:v256:tutorial:replay_mobile")
+        async def tutorial_cb(i):
+            _set_display_mode(i.user.id,"mobile")
+            TUTORIAL_STORE.start(i.user.id)
+            await i.response.edit_message(attachments=[],view=TutorialIntroView(i.user.id,"mobile",replay=True))
+        tutorial.callback=tutorial_cb
+        panel.add_item(v2_separator(True)); panel.add_item(discord.ui.Section("### 📖 Tutoriel\nRevoir les bases. Aucune seconde récompense.",accessory=tutorial))
         self.add_item(panel)
+
+
+class _TutorialBase(discord.ui.LayoutView):
+    def __init__(self, owner_id: int, mode: str, *, timeout: int = 1800):
+        super().__init__(timeout=timeout)
+        self.owner_id=int(owner_id)
+        self.mode="mobile" if mode=="mobile" else "pc"
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("❌ Ce tutoriel appartient à un autre joueur.", ephemeral=True)
+            return False
+        return True
+
+    async def _elyndor(self, interaction: discord.Interaction):
+        if self.mode=="mobile":
+            await interaction.response.edit_message(content=None,attachments=[],view=MobileWorldView(interaction.user.id))
+        else:
+            file=discord.File(WORLD_FORGE.WORLD_MAP,filename="elyndor_map.png")
+            await interaction.response.edit_message(content=None,attachments=[file],view=WorldHubV2(private_session=True))
+
+
+class TutorialIntroView(_TutorialBase):
+    def __init__(self, owner_id:int, mode:str, replay:bool=False):
+        super().__init__(owner_id,mode)
+        start=discord.ui.Button(label="Commencer",emoji="⚔️",style=discord.ButtonStyle.primary,custom_id=f"altherya:v256:tutorial:start:{mode}")
+        async def start_cb(i):
+            await i.response.edit_message(attachments=[],view=TutorialMoveView(self.owner_id,self.mode))
+        start.callback=start_cb
+        note=("Tu as déjà reçu la récompense de bienvenue. Refaire le tutoriel ne donnera **aucun Gold ni XP supplémentaire**."
+              if replay or TUTORIAL_STORE.reward_claimed(owner_id)
+              else "Une petite récompense de bienvenue t'attend à la fin de ton premier parcours.")
+        panel=v2_container(
+            v2_header("🌫️ AUX PORTES D'ELYNDOR","Un garde barre encore le passage vers le royaume."),
+            v2_separator(True),
+            discord.ui.TextDisplay(
+                "**Garde :** « Première fois à Elyndor ? Alors écoute bien. Ici, chaque décision peut avoir son importance. »\\n\\n"
+                "Ce court prologue te montre uniquement les bases. Le reste du royaume se découvre en jouant.\\n\\n"
+                f"🎁 {note}"
+            ),
+            v2_action_row(start),colour=0xB67A2A
+        )
+        self.add_item(panel)
+
+
+class TutorialMoveView(_TutorialBase):
+    def __init__(self,owner_id:int,mode:str):
+        super().__init__(owner_id,mode)
+        go=discord.ui.Button(label="Marché",emoji="🛒",style=discord.ButtonStyle.primary,custom_id=f"altherya:v256:tutorial:market:{mode}")
+        async def go_cb(i):
+            await i.response.edit_message(attachments=[],view=TutorialInteractView(self.owner_id,self.mode))
+        go.callback=go_cb
+        panel=v2_container(
+            v2_header("🧭 1/4 — SE DÉPLACER","Chaque lieu d'Elyndor possède ses propres activités."),
+            v2_separator(True),
+            discord.ui.TextDisplay("**Garde :** « Commence par rejoindre le Marché. Utilise les boutons de destination pour voyager. »"),
+            v2_action_row(go),colour=0xB67A2A
+        )
+        self.add_item(panel)
+
+
+class TutorialInteractView(_TutorialBase):
+    def __init__(self,owner_id:int,mode:str):
+        super().__init__(owner_id,mode)
+        talk=discord.ui.Button(label="Parler au marchand",emoji="💬",style=discord.ButtonStyle.success,custom_id=f"altherya:v256:tutorial:talk:{mode}")
+        async def talk_cb(i):
+            await i.response.edit_message(attachments=[],view=TutorialProfileView(self.owner_id,self.mode))
+        talk.callback=talk_cb
+        panel=v2_container(
+            v2_header("🛒 2/4 — INTERAGIR","Tu arrives devant l'étal d'un marchand."),
+            v2_separator(True),
+            discord.ui.TextDisplay("**Marchand :** « À Elyndor, observe toujours les actions proposées. Elles changent selon le lieu où tu te trouves. »"),
+            v2_action_row(talk),colour=0xB67A2A
+        )
+        self.add_item(panel)
+
+
+class TutorialProfileView(_TutorialBase):
+    def __init__(self,owner_id:int,mode:str):
+        super().__init__(owner_id,mode)
+        nxt=discord.ui.Button(label="J'ai compris",emoji="✅",style=discord.ButtonStyle.primary,custom_id=f"altherya:v256:tutorial:profile:{mode}")
+        async def nxt_cb(i):
+            await i.response.edit_message(attachments=[],view=TutorialRewardView(self.owner_id,self.mode))
+        nxt.callback=nxt_cb
+        panel=v2_container(
+            v2_header("👤 3/4 — TON PERSONNAGE","Les cinq informations à retenir."),
+            v2_separator(True),
+            discord.ui.TextDisplay(
+                "❤️ **PV** — ta résistance au combat\\n"
+                "⭐ **Niveau / XP** — ta progression\\n"
+                "🪙 **Gold** — ta monnaie principale\\n"
+                "🎭 **Réputations** — la façon dont Elyndor te perçoit\\n"
+                "🎒 **Inventaire** — tes objets et ressources"
+            ),
+            v2_action_row(nxt),colour=0xB67A2A
+        )
+        self.add_item(panel)
+
+
+class TutorialRewardView(_TutorialBase):
+    def __init__(self,owner_id:int,mode:str):
+        super().__init__(owner_id,mode)
+        finish=discord.ui.Button(label="Terminer le tutoriel",emoji="🎁",style=discord.ButtonStyle.success,custom_id=f"altherya:v256:tutorial:finish:{mode}")
+        async def finish_cb(i):
+            await safe_defer(i, ephemeral=True)
+            try:
+                result=TUTORIAL_STORE.finish_and_reward(i.user.id)
+                # Synchronise le niveau d'expédition avec l'XP désormais persistée.
+                CASTLE_STORE.ensure(i.user.id)
+                with CASTLE_STORE._c() as c:
+                    CASTLE_STORE._sync_level(c,i.user.id); c.commit()
+            except Exception as exc:
+                print(f"[TUTORIEL] récompense impossible user={i.user.id}: {exc}")
+                return await i.followup.send("❌ La fin du tutoriel n'a pas pu être enregistrée. Réessaie : aucune récompense ne sera doublée.",ephemeral=True)
+
+            if result["first_reward"]:
+                msg=(f"🎁 **Récompense de bienvenue reçue**\\n"
+                     f"🪙 +**{result['gold']} Gold**\\n⭐ +**{result['xp']} XP**\\n\\n"
+                     "Cette récompense est définitivement marquée comme récupérée.")
+            else:
+                msg=("📖 **Tutoriel terminé à nouveau.**\\n"
+                     "Ta récompense de bienvenue avait déjà été récupérée : aucun Gold ni XP supplémentaire n'a été ajouté.")
+            await i.followup.send(msg,ephemeral=True)
+            # Le defer empêche edit_message via response; on édite la fenêtre originale.
+            if self.mode=="mobile":
+                await i.edit_original_response(content=None,attachments=[],view=MobileWorldView(i.user.id))
+            else:
+                file=discord.File(WORLD_FORGE.WORLD_MAP,filename="elyndor_map.png")
+                await i.edit_original_response(content=None,attachments=[file],view=WorldHubV2(private_session=True))
+        finish.callback=finish_cb
+        already=TUTORIAL_STORE.reward_claimed(owner_id)
+        reward=("Tu as déjà récupéré cette récompense. Cette étape terminera seulement le tutoriel."
+                if already else f"Pour ton premier passage : **{TUTORIAL_GOLD} Gold** et **{TUTORIAL_XP} XP**.")
+        panel=v2_container(
+            v2_header("🏰 4/4 — LES PORTES S'OUVRENT","Le garde s'écarte enfin."),
+            v2_separator(True),
+            discord.ui.TextDisplay(
+                "**Garde :** « C'est tout ce que tu as besoin de savoir. Le reste... tu le découvriras toi-même. »\\n\\n"
+                f"🎁 {reward}"
+            ),
+            v2_action_row(finish),colour=0xB67A2A
+        )
+        self.add_item(panel)
+
 
 class DisplayModeSelectView(discord.ui.LayoutView):
     """Premier écran public : le joueur choisit son rendu avant de charger Altherya."""
@@ -748,10 +920,16 @@ class DisplayModeSelectView(discord.ui.LayoutView):
         mobile=discord.ui.Button(label="Mode Mobile",emoji="📱",style=discord.ButtonStyle.success,custom_id="altherya:display:mobile")
         async def pc_cb(i):
             _set_display_mode(i.user.id,"pc")
+            if not TUTORIAL_STORE.completed(i.user.id):
+                TUTORIAL_STORE.start(i.user.id)
+                return await i.response.send_message(view=TutorialIntroView(i.user.id,"pc"),ephemeral=True)
             file=discord.File(WORLD_FORGE.WORLD_MAP,filename="elyndor_map.png")
             await i.response.send_message(file=file,view=WorldHubV2(private_session=True),ephemeral=True)
         async def mobile_cb(i):
             _set_display_mode(i.user.id,"mobile")
+            if not TUTORIAL_STORE.completed(i.user.id):
+                TUTORIAL_STORE.start(i.user.id)
+                return await i.response.send_message(view=TutorialIntroView(i.user.id,"mobile"),ephemeral=True)
             await i.response.send_message(view=MobileWorldView(i.user.id),ephemeral=True)
         pc.callback=pc_cb; mobile.callback=mobile_cb
         panel=v2_container(
@@ -1873,25 +2051,25 @@ async def play_tavern_rps(interaction: discord.Interaction, session_id: str, wag
 
 MARKET_ITEMS = [
     {
-        "key":"pickaxe", "name":"Pioche en bois", "emoji":"⛏️", "price":100,
+        "key":"pickaxe", "name":"Pioche en bois", "emoji":"⛏️", "price":400,
         "type":"Outil de récolte • Niveau 1",
         "desc":"Une pioche simple mais indispensable pour commencer.",
         "use":"Permet de récolter des minerais pendant les expéditions.",
     },
     {
-        "key":"axe", "name":"Hache en bois", "emoji":"🪓", "price":100,
+        "key":"axe", "name":"Hache en bois", "emoji":"🪓", "price":400,
         "type":"Outil de récolte • Niveau 1",
         "desc":"Une hache légère adaptée aux premières expéditions.",
         "use":"Permet de récolter du bois pendant les expéditions.",
     },
     {
-        "key":"spear", "name":"Lance en bois", "emoji":"🗡️", "price":100,
+        "key":"spear", "name":"Lance en bois", "emoji":"🗡️", "price":400,
         "type":"Outil de chasse • Niveau 1",
         "desc":"Une lance rudimentaire conçue pour les premières chasses.",
         "use":"Permet de chasser et de récupérer des peaux en expédition.",
     },
     {
-        "key":"bag", "name":"Sac de fortune", "emoji":"🎒", "price":100,
+        "key":"bag", "name":"Sac de fortune", "emoji":"🎒", "price":400,
         "type":"Sac d'expédition • Niveau 1",
         "desc":"Un petit sac robuste pour transporter les premiers butins.",
         "use":"Capacité : 8 ressources par expédition.",
@@ -3349,6 +3527,7 @@ def _activity_label(tool_key: str) -> str:
         "axe": "Couper du bois",
         "pickaxe": "Miner",
         "spear": "Chasser",
+        "hands": "Ramasser à mains nues",
     }.get(tool_key, tool_key)
 
 
@@ -3359,7 +3538,7 @@ def _activity_emoji(tool_key: str) -> str:
 def _destination_keys(location_key: str) -> tuple[str, ...]:
     return tuple(
         key for key, meta in EXPEDITIONS.items()
-        if meta.get("location_key") == location_key
+        if meta.get("location_key") == location_key and not meta.get("barehand")
     )
 
 
@@ -3407,6 +3586,14 @@ def location_home_content(user_id: int, location_key: str, notice: str | None = 
                 "Une seule activité peut être menée à la fois.",
             ])
         return "\n".join(lines)
+
+    if location_key == "elarwyn":
+        lines.extend([
+            "",
+            "### 👐 DÉPART SANS ÉQUIPEMENT",
+            "🍄 **Ramassage à mains nues** • Niveau **1** • ⏳ **20 min** • 📦 **6 objets maximum**",
+            "*Aucun outil ni sac requis. Les trouvailles se revendent peu cher, mais permettent de gagner ses premiers Gold.*",
+        ])
 
     lines.extend([
         "",
@@ -3468,6 +3655,31 @@ class ExplorationLocationView(discord.ui.View):
 
                 button.callback = destination_cb
                 self.add_item(button)
+
+        if not active and location_key == "elarwyn":
+            forage = discord.ui.Button(
+                label="Ramassage à mains nues", emoji="🍄", style=discord.ButtonStyle.success, row=2,
+                custom_id="altherya:explore:elarwyn:foraging",
+            )
+            async def forage_cb(interaction: discord.Interaction):
+                if interaction.user.id != self.owner_id:
+                    await interaction.response.send_message("Cette interface appartient à un autre joueur.", ephemeral=True)
+                    return
+                if EXPEDITION_STORE.active_run(self.owner_id):
+                    await interaction.response.send_message("❌ Tu as déjà une expédition en cours.", ephemeral=True)
+                    return
+                ok, msg, run = EXPEDITION_STORE.start(self.owner_id, "elarwyn_foraging", "hands")
+                if not ok or run is None:
+                    await interaction.response.send_message(f"❌ {msg}", ephemeral=True)
+                    return
+                await interaction.response.edit_message(
+                    content=location_home_content(self.owner_id, "elarwyn", "🍄 **Ramassage lancé ! Aucun équipement n'a été nécessaire.**"),
+                    view=ExplorationLocationView(self.owner_id, "elarwyn"),
+                )
+                await announce_expedition_start(interaction.guild, run)
+                start_expedition_monitor(run.run_id)
+            forage.callback = forage_cb
+            self.add_item(forage)
 
         refresh = discord.ui.Button(label="Actualiser", emoji="🔄", style=discord.ButtonStyle.secondary, row=2)
         world = discord.ui.Button(label="Monde", emoji="🌍", style=discord.ButtonStyle.secondary, row=2)
@@ -3730,8 +3942,9 @@ class ExpeditionLiveView(discord.ui.View):
 def expedition_live_content(run, compact: bool = False) -> str:
     zone = EXPEDITIONS[run.expedition_key]
     location = LOCATION_META[zone["location_key"]]
-    tool_name = TOOL_LEVELS[run.tool_level][run.tool_key]
-    bag_name = BAG_LEVELS[run.bag_level]["name"]
+    barehand = bool(zone.get("barehand"))
+    tool_name = "Mains nues" if barehand else TOOL_LEVELS[run.tool_level][run.tool_key]
+    bag_name = "Poches et panier improvisé" if barehand else BAG_LEVELS[run.bag_level]["name"]
     revealed = run.loot if run.claimed else EXPEDITION_STORE.revealed_loot(run.run_id)
     total = sum(revealed.values())
     logs = EXPEDITION_STORE.drop_log(run.run_id, limit=6 if compact else 10)
@@ -3803,7 +4016,8 @@ async def finalize_expedition_run(run_id: str) -> bool:
     CASTLE_STORE.record(final_run.user_id, "expedition")
     expedition_meta = EXPEDITIONS.get(final_run.expedition_key, {})
     expedition_tier = int(expedition_meta.get("destination_index", 1))
-    CASTLE_STORE.add_xp(final_run.user_id, EXPEDITION_TIER_XP.get(expedition_tier, 20))
+    expedition_xp = int(expedition_meta.get("xp_reward", EXPEDITION_TIER_XP.get(expedition_tier, 20)))
+    CASTLE_STORE.add_xp(final_run.user_id, expedition_xp)
 
     # V1.70 : le message mémorisé est l'annonce publique /succes, pas le panneau privé.
     # On transforme donc l'annonce « en cours » en résultat final au lieu de la supprimer.

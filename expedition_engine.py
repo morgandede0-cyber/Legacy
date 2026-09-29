@@ -52,13 +52,14 @@ TOOL_META = {
     "pickaxe": {"emoji": "⛏️", "label": "Pioche", "family": "mining"},
     "axe": {"emoji": "🪓", "label": "Hache", "family": "wood"},
     "spear": {"emoji": "🗡️", "label": "Lance", "family": "hunt"},
+    "hands": {"emoji": "👐", "label": "Mains nues", "family": "foraging"},
 }
 
 STARTER_GEAR = {
-    "pickaxe": {"name": "Pioche en bois", "price": 100},
-    "axe": {"name": "Hache en bois", "price": 100},
-    "spear": {"name": "Lance en bois", "price": 100},
-    "bag": {"name": "Sac de fortune", "price": 100},
+    "pickaxe": {"name": "Pioche en bois", "price": 400},
+    "axe": {"name": "Hache en bois", "price": 400},
+    "spear": {"name": "Lance en bois", "price": 400},
+    "bag": {"name": "Sac de fortune", "price": 400},
 }
 
 # Prix de revente volontairement modérés : les matériaux de Forge ont plus de valeur
@@ -71,6 +72,8 @@ RESOURCE_SELL_PRICES = {
     "Peau de félin du désert": 11, "Croc de félin du désert": 13,
     "Diamant brut": 24, "Bois ancestral": 22, "Peau de bête Alpha": 26, "Croc Alpha": 28, "Griffe Alpha": 30,
     "Cristal ancien": 55, "Cœur de bois ancien": 55, "Trophée légendaire": 70,
+    # Ramassage à mains nues : volontairement très peu rentable, mais accessible sans équipement.
+    "Champignon commun": 2, "Baies sauvages": 2, "Herbes des chemins": 3, "Brindilles sèches": 1, "Petite fleur sauvage": 4,
 }
 
 
@@ -117,6 +120,26 @@ for _location_key, _location in LOCATION_META.items():
             "danger": _DESTINATION_DANGER[_idx - 1],
             "tools": _location["activities"],
         }
+
+# Expédition de démarrage : aucun outil ni sac requis.
+# 20 minutes, 6 objets maximum, gains volontairement faibles pour permettre
+# à un nouveau joueur de constituer ses premiers Gold avant d'acheter son équipement.
+EXPEDITIONS["elarwyn_foraging"] = {
+    "name": "Lisière d'Elarwyn",
+    "description": "Une courte sortie à pied pour ramasser ce que la forêt laisse à portée de main.",
+    "location_key": "elarwyn",
+    "location_name": LOCATION_META["elarwyn"]["name"],
+    "emoji": "🍄",
+    "destination_index": 0,
+    "level": 1,
+    "duration": 20 * 60,
+    "duration_label": "20 min",
+    "danger": "Aucun",
+    "tools": ("hands",),
+    "capacity": 6,
+    "xp_reward": 8,
+    "barehand": True,
+}
 
 # Entrée : (nom, niveau d'outil minimum, poids).
 # Les ressources restent strictement les mêmes que dans l'ancien système.
@@ -165,6 +188,9 @@ LOOT_TABLES: Dict[str, Dict[str, List[Tuple[str, int, int]]]] = {
         "pickaxe": [("Minerai d'or", 3, 22), ("Diamant brut", 4, 70), ("Cristal ancien", 5, 8)],
         "spear": [("Peau d'ours", 3, 15), ("Peau de bête Alpha", 4, 50), ("Croc Alpha", 4, 19), ("Griffe Alpha", 4, 11), ("Trophée légendaire", 5, 5)],
     },
+    "elarwyn_foraging": {
+        "hands": [("Champignon commun", 0, 38), ("Baies sauvages", 0, 30), ("Herbes des chemins", 0, 17), ("Brindilles sèches", 0, 10), ("Petite fleur sauvage", 0, 5)],
+    },
 }
 
 
@@ -175,6 +201,7 @@ RARITY = {
     "Minerai d'or": 3, "Bois d'ébène": 3, "Peau d'ours": 3, "Griffe d'ours": 3, "Peau de félin du désert": 3, "Croc de félin du désert": 3,
     "Diamant brut": 4, "Bois ancestral": 4, "Peau de bête Alpha": 4, "Croc Alpha": 4, "Griffe Alpha": 4,
     "Cristal ancien": 5, "Cœur de bois ancien": 5, "Trophée légendaire": 5,
+    "Champignon commun": 1, "Baies sauvages": 1, "Herbes des chemins": 1, "Brindilles sèches": 1, "Petite fleur sauvage": 1,
 }
 
 RARITY_EMOJI = {1: "⚪", 2: "🟢", 3: "🔵", 4: "🟣", 5: "🟡"}
@@ -419,10 +446,12 @@ class ExpeditionStore:
         current = self.active_run(uid)
         if current:
             return False, "Tu as déjà une expédition en cours ou des loots à récupérer.", current
-        if not self.has_equipment(uid, tool_key):
-            return False, f"Tu dois d'abord acheter {STARTER_GEAR[tool_key]['name']} au Marché.", None
-        if not self.has_equipment(uid, "bag"):
-            return False, "Tu dois d'abord acheter le Sac de fortune au Marché.", None
+        barehand = bool(EXPEDITIONS[expedition_key].get("barehand"))
+        if not barehand:
+            if not self.has_equipment(uid, tool_key):
+                return False, f"Tu dois d'abord acheter {STARTER_GEAR[tool_key]['name']} au Marché.", None
+            if not self.has_equipment(uid, "bag"):
+                return False, "Tu dois d'abord acheter le Sac de fortune au Marché.", None
 
         level = self.get_player_level(uid)
         zone = EXPEDITIONS[expedition_key]
@@ -432,16 +461,21 @@ class ExpeditionStore:
         gear = self.get_gear(uid)
         if tool_key not in zone.get("tools", ()):
             return False, "Cet outil ne correspond pas à l'activité choisie dans cette destination.", None
-        unlocked_tool_level = gear.tool_level(tool_key)
-        selected_tool_level = unlocked_tool_level if tool_level is None else int(tool_level)
-        if selected_tool_level < 1 or selected_tool_level > unlocked_tool_level or selected_tool_level not in TOOL_LEVELS:
-            return False, "Outil sélectionné invalide ou non débloqué.", None
-        tool_level = selected_tool_level
-        selected_bag_level = gear.bag_level if bag_level is None else int(bag_level)
-        if selected_bag_level < 1 or selected_bag_level > gear.bag_level or selected_bag_level not in BAG_LEVELS:
-            return False, "Sac sélectionné invalide ou non débloqué.", None
-        bag_level = selected_bag_level
-        capacity = BAG_LEVELS[bag_level]["capacity"]
+        if barehand:
+            tool_level = 0
+            bag_level = 0
+            capacity = int(zone.get("capacity", 6))
+        else:
+            unlocked_tool_level = gear.tool_level(tool_key)
+            selected_tool_level = unlocked_tool_level if tool_level is None else int(tool_level)
+            if selected_tool_level < 1 or selected_tool_level > unlocked_tool_level or selected_tool_level not in TOOL_LEVELS:
+                return False, "Outil sélectionné invalide ou non débloqué.", None
+            tool_level = selected_tool_level
+            selected_bag_level = gear.bag_level if bag_level is None else int(bag_level)
+            if selected_bag_level < 1 or selected_bag_level > gear.bag_level or selected_bag_level not in BAG_LEVELS:
+                return False, "Sac sélectionné invalide ou non débloqué.", None
+            bag_level = selected_bag_level
+            capacity = BAG_LEVELS[bag_level]["capacity"]
         loot = generate_loot(expedition_key, tool_key, tool_level, capacity)
         now = int(time.time())
         run = ExpeditionRun(
