@@ -3,6 +3,12 @@ from __future__ import annotations
 # Progression globale : chaque niveau devient progressivement plus long.
 def xp_needed_for_level(level: int) -> int:
     level = max(1, int(level))
+    # V2.57 : démarrage volontairement rapide.
+    # L1→2 doit pouvoir se faire en une vraie session de découverte,
+    # puis la courbe s'allonge progressivement.
+    early = {1: 100, 2: 175, 3: 275, 4: 400, 5: 575, 6: 800}
+    if level in early:
+        return early[level]
     return int(round((250 + 75 * ((level - 1) ** 1.55)) / 25.0) * 25)
 
 
@@ -28,12 +34,12 @@ FORGE_GOLD_COSTS = {
 
 # XP mesurée, pensée pour éviter le farm rapide.
 XP_REWARDS = {
-    "arena_win": 35,
-    "arena_loss": 8,
-    "casino": 2,
-    "tavern_game": 3,
-    "tavern_pvp_win": 8,
-    "tavern_pvp_loss": 3,
+    "arena_win": 40,
+    "arena_loss": 10,
+    "casino": 3,
+    "tavern_game": 5,
+    "tavern_pvp_win": 10,
+    "tavern_pvp_loss": 4,
     "larceny_success": 4,
     "npc_theft_success": 7,
     "player_theft_success": 10,
@@ -55,6 +61,6 @@ EXPEDITION_XP = {
 }
 
 # XP des systèmes longs : récompense proportionnelle au temps / risque.
-EXPEDITION_TIER_XP = {1: 20, 2: 35, 3: 55, 4: 80, 5: 120}
+EXPEDITION_TIER_XP = {1: 25, 2: 40, 3: 60, 4: 85, 5: 125}
 ASHKAR_FLOOR_XP = {1: 15, 2: 18, 3: 21, 4: 24, 5: 28, 6: 32, 7: 36, 8: 40, 9: 45, 10: 75}
-JOB_RARITY_XP = {"common": 8, "uncommon": 12, "rare": 18, "epic": 28, "legendary": 45}
+JOB_RARITY_XP = {"common": 12, "uncommon": 16, "rare": 22, "epic": 32, "legendary": 50}

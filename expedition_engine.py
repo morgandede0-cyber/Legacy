@@ -137,7 +137,7 @@ EXPEDITIONS["elarwyn_foraging"] = {
     "danger": "Aucun",
     "tools": ("hands",),
     "capacity": 6,
-    "xp_reward": 8,
+    "xp_reward": 15,
     "barehand": True,
 }
 

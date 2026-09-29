@@ -5,7 +5,7 @@ from pathlib import Path
 from shared_economy import connect_shared, mutate as shared_mutate
 
 TUTORIAL_GOLD = 100
-TUTORIAL_XP = 15
+TUTORIAL_XP = 25
 
 class TutorialStore:
     """Progression + récompense du tutoriel.

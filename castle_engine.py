@@ -7,7 +7,7 @@ from progression import level_from_xp, XP_REWARDS
 from admin_engine import event_multiplier
 
 DAILY_REWARD = 200
-DAILY_XP = 10
+DAILY_XP = 20
 
 # Les 6 quêtes doivent TOUTES être terminées pour débloquer la récompense globale.
 # V1.63 : les objectifs relient directement les grands systèmes de Altherya.
