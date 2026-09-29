@@ -741,32 +741,50 @@ class MobileWorldView(discord.ui.LayoutView):
         self.add_item(panel)
 
 class MobileCityView(discord.ui.LayoutView):
+    """Cité mobile compacte : navigation en quatre rangées de deux boutons."""
     def __init__(self, owner_id: int | None = None):
         super().__init__(timeout=1800)
         self.owner_id = int(owner_id) if owner_id is not None else None
-        status = (f"🧙 **Niveau {CASTLE_STORE.current_level(self.owner_id)}**  •  💰 **{ECONOMY.get_balance(self.owner_id).wallet:,} Gold**" if self.owner_id is not None else "Choisis un lieu.")
-        panel=v2_container(v2_header("🏰 ALTHÉRYA — CITÉ ROYALE", "Ton aventure, en un coup d’œil."),discord.ui.TextDisplay(status),v2_separator(True),colour=0xB67A2A)
-        descriptions={"market":"Achète, vends et équipe ton aventurier.","tavern":"Bois, joue, défie tes amis et écoute le Troubadour.","bank":"Protège tes Gold et consulte ton coffre.","forge":"Améliore ton équipement et renforce tes outils.","arena":"Affronte le Champion ou un autre joueur.","expeditions":"Petits boulots, contrats et récompenses du royaume.","alley":"Marché clandestin, risques et affaires douteuses.","castle":"Quêtes, progression et institutions du royaume."}
-        items=list(DESTINATIONS.items())
-        for idx,(key,data) in enumerate(items):
-            style=discord.ButtonStyle.primary if key in {"tavern","arena","castle"} else (discord.ButtonStyle.danger if key=="alley" else discord.ButtonStyle.secondary)
-            b=discord.ui.Button(label=data["label"],emoji=data["emoji"],style=style,custom_id=f"altherya:mobile:city:{key}")
-            async def cb(i,destination=key):
-                _set_display_mode(i.user.id,"mobile"); await travel(i,destination,edit=True)
-            b.callback=cb
-            panel.add_item(discord.ui.Section(f"### {data['emoji']} {data['label']}\n{descriptions.get(key,'Explore ce lieu.')}",accessory=b))
-            if idx != len(items)-1: panel.add_item(v2_separator())
-        world=discord.ui.Button(label="Monde d'Elyndor",emoji="🌍",style=discord.ButtonStyle.primary,custom_id="altherya:mobile:city:world")
-        async def world_cb(i): await i.response.edit_message(attachments=[],view=MobileWorldView(i.user.id))
-        world.callback=world_cb
-        panel.add_item(v2_separator(True)); panel.add_item(discord.ui.Section("### 🌍 Quitter la cité\nRetourne à la carte du monde d'Elyndor.",accessory=world))
-        tutorial=discord.ui.Button(label="Refaire le tutoriel",emoji="📖",style=discord.ButtonStyle.secondary,custom_id="altherya:v256:tutorial:replay_mobile")
+        status = (f"🧙 **Niveau {CASTLE_STORE.current_level(self.owner_id)}**  •  💰 **{ECONOMY.get_balance(self.owner_id).wallet:,} Gold**"
+                  if self.owner_id is not None else "Choisis un lieu.")
+        panel = v2_container(
+            v2_header("🏰 ALTHÉRYA — CITÉ ROYALE", "Choisis une activité ci-dessous."),
+            discord.ui.TextDisplay(status),
+            v2_separator(True), colour=0xB67A2A,
+        )
+        destinations = list(DESTINATIONS.items())
+        for offset in range(0, len(destinations), 2):
+            buttons = []
+            for key, data in destinations[offset:offset + 2]:
+                style = (discord.ButtonStyle.primary if key in {"tavern", "arena", "castle"}
+                         else discord.ButtonStyle.danger if key == "alley"
+                         else discord.ButtonStyle.secondary)
+                button = discord.ui.Button(label=data["label"], emoji=data["emoji"],
+                                           style=style, custom_id=f"altherya:mobile:city:{key}")
+                async def destination_cb(i, destination=key):
+                    _set_display_mode(i.user.id, "mobile")
+                    await travel(i, destination, edit=True)
+                button.callback = destination_cb
+                buttons.append(button)
+            panel.add_item(v2_action_row(*buttons))
+
+        world = discord.ui.Button(label="Monde d'Elyndor", emoji="🌍",
+                                  style=discord.ButtonStyle.primary,
+                                  custom_id="altherya:mobile:city:world")
+        async def world_cb(i):
+            await i.response.edit_message(attachments=[], view=MobileWorldView(i.user.id))
+        world.callback = world_cb
+        tutorial = discord.ui.Button(label="Refaire le tutoriel", emoji="📖",
+                                     style=discord.ButtonStyle.secondary,
+                                     custom_id="altherya:v256:tutorial:replay_mobile")
         async def tutorial_cb(i):
-            _set_display_mode(i.user.id,"mobile")
+            _set_display_mode(i.user.id, "mobile")
             TUTORIAL_STORE.start(i.user.id)
-            await i.response.edit_message(attachments=[],view=TutorialIntroView(i.user.id,"mobile",replay=True))
-        tutorial.callback=tutorial_cb
-        panel.add_item(v2_separator(True)); panel.add_item(discord.ui.Section("### 📖 Tutoriel\nRevoir les bases. Aucune seconde récompense.",accessory=tutorial))
+            await i.response.edit_message(
+                attachments=[], view=TutorialIntroView(i.user.id, "mobile", replay=True))
+        tutorial.callback = tutorial_cb
+        panel.add_item(v2_separator())
+        panel.add_item(v2_action_row(world, tutorial))
         self.add_item(panel)
 
 
