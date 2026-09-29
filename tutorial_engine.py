@@ -39,6 +39,30 @@ class TutorialStore:
                 last_started_at TEXT,
                 last_completed_at TEXT
             )""")
+            c.execute("""CREATE TABLE IF NOT EXISTS tutorial_welcome_announcements(
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                public_sent INTEGER NOT NULL DEFAULT 0,
+                logs_sent INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(guild_id,user_id)
+            )""")
+            c.commit()
+
+    def announcement_state(self, guild_id: int, user_id: int) -> dict:
+        with self._c() as c:
+            c.execute("INSERT OR IGNORE INTO tutorial_welcome_announcements(guild_id,user_id) VALUES(?,?)",
+                      (int(guild_id),int(user_id)))
+            row=c.execute("SELECT public_sent,logs_sent FROM tutorial_welcome_announcements WHERE guild_id=? AND user_id=?",
+                          (int(guild_id),int(user_id))).fetchone()
+            c.commit()
+            return dict(row)
+
+    def mark_announcement(self, guild_id: int, user_id: int, field: str):
+        if field not in ("public_sent", "logs_sent"):
+            raise ValueError("Unknown announcement field")
+        with self._c() as c:
+            c.execute(f"UPDATE tutorial_welcome_announcements SET {field}=1 WHERE guild_id=? AND user_id=?",
+                      (int(guild_id),int(user_id)))
             c.commit()
 
     def ensure(self, user_id: int):

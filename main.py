@@ -911,6 +911,58 @@ class TutorialPlacesView(_TutorialBase):
         self.add_item(panel)
 
 
+async def announce_tutorial_welcome(guild: discord.Guild | None, user):
+    """Publie une seule bienvenue par joueur et par salon configuré, après le premier tutoriel.
+
+    Les deux publications sont suivies séparément. Si un salon est indisponible,
+    une nouvelle tentative pourra se produire à la prochaine fin de tutoriel.
+    """
+    if guild is None:
+        return
+    state = TUTORIAL_STORE.announcement_state(guild.id, user.id)
+    if not state["public_sent"]:
+        channel_id = ACHIEVEMENT_STORE.get_channel(guild.id)
+        if channel_id:
+            try:
+                channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
+                embed = discord.Embed(
+                    title="🏰 UN NOUVEL AVENTURIER !",
+                    description=(
+                        f"Les portes d'Elyndor s'ouvrent pour accueillir {user.mention} !\n\n"
+                        "Après avoir terminé son initiation, notre nouvel aventurier "
+                        "est désormais prêt à écrire sa propre légende.\n\n"
+                        "⚔️ **Que son aventure commence !**"
+                    ),
+                    color=discord.Color.gold(),
+                )
+                avatar = getattr(getattr(user, "display_avatar", None), "url", None)
+                if avatar:
+                    embed.set_thumbnail(url=avatar)
+                embed.set_footer(text="Althérya • Bienvenue dans le royaume")
+                await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True))
+                TUTORIAL_STORE.mark_announcement(guild.id, user.id, "public_sent")
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError) as exc:
+                print(f"[TUTORIEL] bienvenue publique impossible user={user.id}: {exc}")
+    if not state["logs_sent"]:
+        channel_id = ACHIEVEMENT_STORE.get_log_channel(guild.id)
+        if channel_id:
+            try:
+                channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
+                embed = discord.Embed(
+                    title="📋 Nouveau joueur — Elyndor",
+                    description=(f"{user.mention} a terminé son premier tutoriel "
+                                 "et rejoint le royaume d'Elyndor.\n"
+                                 f"🎁 Récompense de bienvenue : **{TUTORIAL_GOLD} Gold** "
+                                 f"et **{TUTORIAL_XP} XP**."),
+                    color=discord.Color.dark_grey(),
+                )
+                embed.set_footer(text=f"Althérya • Logs • Discord ID : {user.id}")
+                await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+                TUTORIAL_STORE.mark_announcement(guild.id, user.id, "logs_sent")
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, TypeError) as exc:
+                print(f"[TUTORIEL] log bienvenue impossible user={user.id}: {exc}")
+
+
 class TutorialRewardView(_TutorialBase):
     def __init__(self,owner_id:int,mode:str):
         super().__init__(owner_id,mode)
@@ -938,6 +990,11 @@ class TutorialRewardView(_TutorialBase):
                 msg=("📖 **Tutoriel terminé.**\n"
                      "Tu avais déjà récupéré la récompense de bienvenue : aucun Gold ni XP supplémentaire n'a été ajouté.")
             await i.followup.send(msg,ephemeral=True)
+
+            # Première arrivée seulement : les relectures du tutoriel ne publient rien.
+            # En cas de salon momentanément indisponible, une nouvelle tentative reste possible.
+            if TUTORIAL_STORE.completed(i.user.id):
+                await announce_tutorial_welcome(i.guild, i.user)
 
             if self.mode=="mobile":
                 await i.edit_original_response(content=None,attachments=[],view=MobileWorldView(i.user.id))
