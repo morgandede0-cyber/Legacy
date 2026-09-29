@@ -13,9 +13,10 @@ load_dotenv()
 BASE = Path(__file__).resolve().parent
 DATA = BASE / "data"
 
-# BETA V1 — wipe unique avant toute initialisation/migration des données de jeu.
-from beta_reset import run_once as run_beta_reset_once
-BETA_RESET_PERFORMED = run_beta_reset_once(DATA)
+# Lancement officiel : reset automatique, sauvegardé, une seule fois.
+# Ne jamais déclencher automatiquement l'ancien wipe bêta.
+from official_launch_reset import run_if_requested
+OFFICIAL_RESET_PERFORMED = run_if_requested(DATA)
 from shared_economy import (
     migrate_legacy_wallets, pending_events, mark_event_processed,
     enabled as shared_economy_enabled, diagnostics as shared_economy_diagnostics,
