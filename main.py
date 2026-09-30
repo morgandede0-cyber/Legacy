@@ -31,7 +31,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 from economy import Economy
 from arena_engine import ArenaStore, BattleState, Fighter, CLASSES, CHAMPION_PROFILES, class_line, choose_first, resolve_action, bot_choose_action
-from expedition_engine import ExpeditionStore, EXPEDITIONS, LOCATION_META, TOOL_META, TOOL_LEVELS, BAG_LEVELS, UPGRADE_RECIPES, BAG_UPGRADE_RECIPES, STARTER_GEAR, RESOURCE_SELL_PRICES, EXPEDITION_OBJECTS, RARITY, RARITY_EMOJI, format_duration, loot_lines
+from expedition_engine import ExpeditionStore, EXPEDITIONS, LOCATION_META, TOOL_META, TOOL_LEVELS, BAG_LEVELS, UPGRADE_RECIPES, BAG_UPGRADE_RECIPES, STARTER_GEAR, RESOURCE_SELL_PRICES, EXPEDITION_OBJECTS, LOOT_TABLES, RARITY, RARITY_EMOJI, format_duration, loot_lines
 from dark_alley import (DarkAlleyStore, HEIST_ATTEMPTS, HEIST_CODE_LENGTH, GUARD_ENTRY_FEE,
                         INVITATION_ITEM, ACTION_COOLDOWN, ALLEY_BAN_SECONDS, short_time)
 from casino_engine import (CasinoStore, MAX_BET, VIP_MAX_BET, MIN_BET, SLOT_SYMBOLS, draw_slot, slot_multiplier, roulette_spin)
@@ -61,7 +61,6 @@ TRANSITIONS = BASE / "assets" / "transitions"
 EXPEDITION_LIVE_ASSETS = DATA / "expedition_live"
 EXPEDITION_LIVE_ASSETS.mkdir(parents=True, exist_ok=True)
 HUB_STATE_FILE = DATA / "hub_message.json"
-DISPLAY_MODE_FILE = DATA / "display_modes.json"
 
 def _display_mode(user_id: int) -> str:
     return DISPLAY_MODE.get(user_id)
@@ -3127,11 +3126,11 @@ async def handle_battle_action(interaction: discord.Interaction, state: BattleSt
         await finish_battle_interaction(interaction,state,winner); return
     state.switch()
     if state.mode == "champion" and state.actor().user_id is None:
-        await interaction.edit_original_response(content=battle_content(state), view=BattleView(state))
+        await _edit_arena_surface(interaction, content=battle_content(state), view=BattleView(state))
         await asyncio.sleep(1.0)
         await run_bot_turn(state, interaction)
     else:
-        await interaction.edit_original_response(content=battle_content(state), view=BattleView(state))
+        await _edit_arena_surface(interaction, content=battle_content(state), view=BattleView(state))
         schedule_turn_timeout(state, interaction)
 
 
@@ -3789,6 +3788,20 @@ class ExplorationLocationView(discord.ui.View):
                 button.callback = destination_cb
                 self.add_item(button)
 
+        if not active:
+            loot_button = discord.ui.Button(label="Voir les butins", emoji="📦", style=discord.ButtonStyle.secondary, row=2,
+                                            custom_id=f"altherya:explore:{location_key}:loot")
+            async def loot_cb(interaction: discord.Interaction):
+                if interaction.user.id != self.owner_id:
+                    await interaction.response.send_message("Cette interface appartient à un autre joueur.", ephemeral=True)
+                    return
+                details = [expedition_available_loot(k) for k in _destination_keys(self.location_key)]
+                if self.location_key == "elarwyn":
+                    details.insert(0, expedition_available_loot("elarwyn_foraging"))
+                await interaction.response.send_message("\n\n".join(details)[:3900], ephemeral=True)
+            loot_button.callback = loot_cb
+            self.add_item(loot_button)
+
         if not active and location_key == "elarwyn":
             forage = discord.ui.Button(
                 label="Ramassage à mains nues", emoji="🍄", style=discord.ButtonStyle.success, row=2,
@@ -3845,6 +3858,17 @@ class ExplorationLocationView(discord.ui.View):
         self.add_item(world)
 
 
+def expedition_available_loot(expedition_key: str) -> str:
+    zone = EXPEDITIONS[expedition_key]
+    lines = [f"📦 **BUTINS POSSIBLES — {zone['name']}**", "*Les ressources dépendent du niveau de ton outil. Les gains ne sont pas garantis.*"]
+    for tool, entries in LOOT_TABLES.get(expedition_key, {}).items():
+        lines.append(f"\n{_activity_emoji(tool)} **{_activity_label(tool)}**")
+        for name, min_level, weight in entries:
+            rarity = RARITY_EMOJI.get(RARITY.get(name, 1), "⚪")
+            lines.append(f"{rarity} {name} • outil niv. {min_level} min.")
+    return "\n".join(lines)
+
+
 def activity_content(expedition_key: str) -> str:
     zone = EXPEDITIONS[expedition_key]
     event = current_event(zone.get("location_key", ""))
@@ -3859,6 +3883,7 @@ def activity_content(expedition_key: str) -> str:
         f"☠️ Danger : **{zone['danger']}**\n\n"
         "### 🎯 CHOISIS TON ACTIVITÉ\n"
         f"{activities}\n\n"
+        f"{expedition_available_loot(expedition_key)}\n\n"
         "⚠️ **Une expédition = une seule activité.** Une fois lancée, tu ne pourras pas changer d'activité avant la fin."
     )
 
@@ -4491,11 +4516,12 @@ class ThiefView(discord.ui.View):
             r=DARK_STORE.petty_larceny(i.user.id)
             if not r.get('ok'):
                 await i.followup.send(f"⏳ Nouveau larcin dans **{short_time(r.get('cooldown',0))}**.",ephemeral=True); return
-            CASTLE_STORE.add_xp(i.user.id, XP_REWARDS["larceny_success"])
+            xp_gain = random.randint(5, 10)
+            CASTLE_STORE.add_xp(i.user.id, xp_gain)
             rep=DARK_STORE.criminal_reputation(i.user.id)
             if rep['tier']: await announce_achievement(i,f"criminal_reputation:{rep['tier']}")
             if r['amount']: await announce_gold_activity(i.guild,i.user,int(r['amount']),"Petit larcin",public=False)
-            await i.followup.send(f"🪙 Petit larcin réussi : **+{r['amount']} Gold**. Réputation : **{rep['label']}**.\n⏳ Nouveau larcin dans **30 min**.",ephemeral=True)
+            await i.followup.send(f"🪙 Petit larcin réussi : **+{r['amount']} Gold**, **+{xp_gain} XP**. Réputation : **{rep['label']}**.\n⏳ Nouveau larcin dans **30 min**.",ephemeral=True)
         async def npc_cb(i):
             if DARK_STORE.criminal_reputation(i.user.id)['label'] not in ("Petite frappe","Bandit","Criminel","Seigneur de la Ruelle"):
                 await i.response.send_message("🔒 Rang **Petite frappe** requis.",ephemeral=True); return
@@ -4652,8 +4678,10 @@ class GuardView(discord.ui.View):
                                    custom_id="legacy:alley:guard:invite")
         pay = discord.ui.Button(label=f"Payer {GUARD_ENTRY_FEE} Gold", emoji="💰", style=discord.ButtonStyle.primary,
                                 custom_id="legacy:alley:guard:pay")
-        vip = discord.ui.Button(label="Entrée VIP", emoji="👑", style=discord.ButtonStyle.success,
-                                custom_id="legacy:alley:guard:vip")
+        is_vip = bool(CASINO_STORE.loyalty(self.owner_id)["vip"]) if self.owner_id is not None else False
+        pay.label = "Entrée VIP" if is_vip else f"Payer {GUARD_ENTRY_FEE} Gold"
+        pay.emoji = "👑" if is_vip else "💰"
+        pay.style = discord.ButtonStyle.success if is_vip else discord.ButtonStyle.primary
         back = discord.ui.Button(label="Retour à la ruelle", emoji="↩️", style=discord.ButtonStyle.secondary,
                                  custom_id="legacy:alley:guard:back")
 
@@ -4709,8 +4737,8 @@ class GuardView(discord.ui.View):
         async def back_cb(interaction: discord.Interaction):
             await show_alley_home(interaction)
 
-        invite.callback = invite_cb; pay.callback = pay_cb; vip.callback = vip_cb; back.callback = back_cb
-        self.add_item(invite); self.add_item(pay); self.add_item(vip); self.add_item(back)
+        invite.callback = invite_cb; pay.callback = pay_cb; back.callback = back_cb
+        self.add_item(invite); self.add_item(pay); self.add_item(back)
 
 
 
@@ -5514,47 +5542,13 @@ def _podium_cell(text: str, width: int) -> str:
 
 
 def _podium_text(top3):
-    """Podium texte compact et stable : 2e à gauche, 1er au centre, 3e à droite.
-
-    Les noms/fortunes sont volontairement limités à 11 caractères par colonne afin
-    que Discord ne replie jamais le dessin et ne décale plus les marches.
-    """
-    slots = {1: ("—", 0), 2: ("—", 0), 3: ("—", 0)}
-    for pos, name, total in top3:
-        slots[int(pos)] = (str(name), int(total))
-
-    n1, g1 = slots[1]
-    n2, g2 = slots[2]
-    n3, g3 = slots[3]
-    w = 11
-    gap = "  "
-
-    def row(a="", b="", c=""):
-        return f"{_podium_cell(a,w)}{gap}{_podium_cell(b,w)}{gap}{_podium_cell(c,w)}"
-
-    def gold(v):
-        # Format court pour préserver la géométrie du podium.
-        if v >= 1_000_000_000:
-            return f"{v/1_000_000_000:.1f}Md Gold".replace(".0", "")
-        if v >= 1_000_000:
-            return f"{v/1_000_000:.1f}M Gold".replace(".0", "")
-        if v >= 1_000:
-            return f"{v/1_000:.1f}k Gold".replace(".0", "")
-        return f"{v} Gold"
-
-    lines = [
-        "```",
-        row(n2, n1, n3),
-        row(gold(g2), gold(g1), gold(g3)),
-        row("", "┌─────────┐", ""),
-        row("", "│    1    │", ""),
-        row("┌─────────┐", "│         │", "┌─────────┐"),
-        row("│    2    │", "│         │", "│    3    │"),
-        row("│         │", "│         │", "│         │"),
-        row("└─────────┘", "└─────────┘", "└─────────┘"),
-        "```",
-    ]
-    return "\n".join(lines)
+    """Classement vertical : pas de colonnes monospace décalées sur mobile."""
+    slots = {int(pos): (str(name), int(total)) for pos, name, total in top3}
+    lines = []
+    for rank, medal in ((1, "🥇"), (2, "🥈"), (3, "🥉")):
+        name, total = slots.get(rank, ("Place libre", 0))
+        lines.append(f"{medal} **{name}** — **{total:,} Gold**".replace(",", " "))
+    return "\n\n".join(lines)
 
 async def show_castle_podium(interaction):
     rows=CASTLE_STORE.leaderboard(3)
@@ -5571,13 +5565,8 @@ async def show_castle_podium(interaction):
     children=[discord.ui.TextDisplay('# 🏆 HALL OF FAME — ALTHÉRYA')]
     children.append(discord.ui.TextDisplay('*Les trois plus grandes fortunes du Royaume de IV*'))
 
-    # Les trois vraies photos de profil Discord, dans l'ordre visuel du podium : 2 • 1 • 3.
-    if avatars:
-        gallery=discord.ui.MediaGallery()
-        for pos in (2,1,3):
-            if pos in avatars:
-                gallery.add_item(media=avatars[pos],description=f'#{pos} du classement Altherya')
-        children.append(gallery)
+    # Les avatars en galerie ne sont pas alignés sur les textes sur mobile.
+    # Afficher uniquement le classement vertical garantit la correspondance.
 
     children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
     if top3:

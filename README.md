@@ -1,3 +1,5 @@
+> **Documentation historique Legacy V1.** Pour les versions actuelles, consulter `AUDIT_V2_63.md` et `docs/historique/`. Ne pas utiliser les anciennes commandes citées ici comme référence de la V2.63.
+
 # LegacyBot V1 — Hub interactif
 
 Reconstruction depuis zéro.

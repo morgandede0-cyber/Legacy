@@ -40,7 +40,7 @@ XP_REWARDS = {
     "tavern_game": 5,
     "tavern_pvp_win": 10,
     "tavern_pvp_loss": 4,
-    "larceny_success": 4,
+    "larceny_success": 5,
     "npc_theft_success": 7,
     "player_theft_success": 10,
     "crime_success": 12,
