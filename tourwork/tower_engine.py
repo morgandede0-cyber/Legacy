@@ -246,7 +246,7 @@ def make_state(user: discord.abc.User, floor: int, class_key: str) -> BattleStat
     lvl_scale = max(0, level - 1)
     class_hp_mult = cfg["hp"] / 100.0
     class_speed_mult = cfg["speed"] / 100.0
-    hp = round((1000 + 35 * lvl_scale) * class_hp_mult)
+    hp = round((100 + 10 * lvl_scale) * class_hp_mult)
     atk = round(gear.atk * cfg["attack"] * (1 + 0.025 * lvl_scale))
     defense = round(gear.defense + 3 * lvl_scale)
     speed = round(gear.speed * class_speed_mult + 1.2 * lvl_scale)

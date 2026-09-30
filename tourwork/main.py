@@ -2725,9 +2725,8 @@ async def fighter_with_equipment(user_id:int, name:str, class_key:str) -> Fighte
     eq = await WORLD_FORGE.DB.get_equipment(user_id)
     st = WORLD_FORGE.stats_from_equipment(eq)
     level = max(1, CASTLE_STORE.current_level(user_id))
-    # Les PV viennent uniquement du niveau. +35 PV par niveau après le niveau 1,
-    # puis le profil de classe (Gardien +20%, Traqueur -5%, Ravageur neutre).
-    base_level_hp = 1000 + 35 * (level - 1)
+    # Les PV viennent du niveau : 100 PV au niveau 1, puis +10 par niveau.
+    base_level_hp = 100 + 10 * (level - 1)
     # Aucun bonus de classe pour les joueurs de l’Arène. Les PV suivent le niveau.
     max_hp = base_level_hp if class_key == "arena_fighter" else round(base_level_hp * CLASSES[class_key]["hp"] / 100.0)
     return Fighter(user_id, name, class_key, max_hp=max_hp, equipment_atk_pct=st.atk_bonus_pct, equipment_def_pct=st.def_bonus_pct, equipment_speed_pct=st.speed_bonus_pct, player_level=level)
@@ -3173,6 +3172,29 @@ def _arena_result_text(winner: Fighter, payout: int) -> str:
     )
 
 
+async def _arena_victory_countdown(surface, winner: Fighter, payout: int):
+    """Compte à rebours sur le panneau éphémère, puis fermeture (sans message supplémentaire)."""
+    for seconds in (3, 2, 1):
+        text = (
+            f"🏆 **Félicitations {winner.name} !**\n"
+            f"⚔️ Le combat est terminé."
+            + (f"\n💰 Récompense : **{_gold(payout)} Gold**" if payout else "")
+            + f"\n\n⏳ Fermeture dans **{seconds}** seconde{'s' if seconds > 1 else ''}…"
+        )
+        try:
+            await _edit_arena_surface(surface, content=text, view=discord.ui.View())
+        except (discord.NotFound, discord.HTTPException):
+            return  # Le joueur a fermé l'interface ou le webhook a expiré.
+        await asyncio.sleep(1)
+    try:
+        if isinstance(surface, discord.Interaction):
+            await surface.delete_original_response()
+        else:
+            await surface.delete()
+    except (discord.NotFound, discord.HTTPException):
+        pass
+
+
 async def finish_battle_interaction(interaction: discord.Interaction, state: BattleState, winner: Fighter):
     task = BATTLE_TIMEOUTS.pop(state.battle_id, None)
     if task and not task.done():
@@ -3185,12 +3207,7 @@ async def finish_battle_interaction(interaction: discord.Interaction, state: Bat
     # IMPORTANT : mettre à jour le panneau AVANT les logs/succès.
     # Ainsi, même si un système secondaire plante, Discord ne garde jamais un ancien
     # tour cliquable qui répond ensuite « combat déjà terminé ».
-    await interaction.edit_original_response(
-        content=_arena_result_text(winner, payout),
-        attachments=[],
-        embeds=[],
-        view=ArenaView(),
-    )
+    asyncio.create_task(_arena_victory_countdown(interaction, winner, payout))
 
     await _arena_post_finish_bookkeeping(interaction.guild, state, winner, payout)
     for f in state.fighters:
@@ -3209,11 +3226,7 @@ async def finish_battle_surface(surface, state: BattleState, winner: Fighter):
 
     # Même correction pour les tours du Champion / forfaits, avec support natif
     # des réponses éphémères afin d'éviter l'erreur Discord 10008 Unknown Message.
-    await _edit_arena_surface(
-        surface,
-        content=_arena_result_text(winner, payout),
-        view=ArenaView(),
-    )
+    asyncio.create_task(_arena_victory_countdown(surface, winner, payout))
 
     guild = surface.guild if isinstance(surface, discord.Interaction) else surface.guild
     await _arena_post_finish_bookkeeping(guild, state, winner, payout)

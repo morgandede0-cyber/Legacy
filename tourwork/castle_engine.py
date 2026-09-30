@@ -73,7 +73,7 @@ class CastleStore:
         with self._c() as c: return dict(c.execute('SELECT * FROM castle_profiles WHERE user_id=?',(int(user_id),)).fetchone())
     @staticmethod
     def _base_hp_for_level(level):
-        return 1000 + 35 * (max(1, int(level)) - 1)
+        return 100 + 10 * (max(1, int(level)) - 1)
 
     def _queue_levelups(self,c,uid,before_xp,after_xp):
         old_level=level_from_xp(int(before_xp))[0]
