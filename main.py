@@ -164,6 +164,7 @@ RECOVERED_ARENA_BATTLES = ARENA_STORE.recover_unfinished()
 RECOVERED_TAVERN_GAMES = TAVERN_STORE.recover_unfinished()
 ACTIVE_BATTLES: dict[str, BattleState] = {}
 BATTLE_TIMEOUTS: dict[str, asyncio.Task] = {}
+BATTLE_ACTION_LOCKS: dict[str, asyncio.Lock] = {}
 EXPEDITION_MONITORS: dict[str, asyncio.Task] = {}
 
 DESTINATIONS = {
@@ -478,7 +479,7 @@ class WorldHubView(discord.ui.View):
                 await interaction.response.send_message(embed=embed, file=file, view=WORLD_FORGE.KhazGoramView(), ephemeral=True)
 
         async def tower_cb(interaction: discord.Interaction):
-            await TOWER.show_lobby(interaction, edit=self.private_session)
+            await TOWER.show_lobby(interaction, edit=False)  # Tour classique : ne pas éditer le message V2
 
         async def forest_cb(interaction: discord.Interaction):
             await open_exploration_location(interaction, "elarwyn", edit=self.private_session)
@@ -596,7 +597,7 @@ class WorldHubV2(discord.ui.LayoutView):
                     embed = discord.Embed(title="⚒️ La Forge de KHAZ'GORAM", description="Thorgar façonne ici les équipements des légendes.", color=0xB67A2A)
                     embed.set_image(url="attachment://khaz_goram.png")
                     if self.private_session:
-                        await interaction.response.edit_message(content=None, embed=embed, attachments=[file], view=WORLD_FORGE.KhazGoramView())
+                        await _replace_v2_with_legacy(interaction, embed=embed, file=file, view=WORLD_FORGE.KhazGoramView())
                     else:
                         await interaction.response.send_message(embed=embed, file=file, view=WORLD_FORGE.KhazGoramView(), ephemeral=True)
                     return
@@ -2921,8 +2922,7 @@ class ChampionClassSelect(discord.ui.Select):
             await interaction.response.send_message("Cette préparation appartient à un autre joueur.", ephemeral=True); return
         v.class_key = self.values[0]
         await interaction.response.edit_message(
-            content=f"👑 **Défi du Champion**\nMise : **{_gold(v.wager)} Gold**\nClasse : {class_line(v.class_key)}\n\nQuand tu es prêt, valide le combat.",
-            view=v,
+            view=_legacy_view_to_v2(v, content=f"👑 **Défi du Champion**\nMise : **{_gold(v.wager)} Gold**\nClasse : {class_line(v.class_key)}\n\nQuand tu es prêt, valide le combat.", title="👑 DÉFI DU CHAMPION"),
         )
 
 
@@ -2978,7 +2978,7 @@ class FriendClassSelect(discord.ui.Select):
             await interaction.response.send_message("Tu ne participes pas à ce défi.", ephemeral=True); return
         v.classes[interaction.user.id] = self.values[0]
         v.ready.discard(interaction.user.id)  # changer de classe retire l'état prêt
-        await interaction.response.edit_message(content=friend_lobby_content(v), view=v)
+        await interaction.response.edit_message(view=_legacy_view_to_v2(v, content=friend_lobby_content(v), title="⚔️ DÉFI AMICAL"))
 
 
 class FriendLobbyView(discord.ui.View):
@@ -2999,7 +2999,7 @@ class FriendLobbyView(discord.ui.View):
                 await interaction.response.send_message("Choisis d'abord ta classe.", ephemeral=True); return
             self.ready.add(uid)
             if len(self.ready) < 2:
-                await interaction.response.edit_message(content=friend_lobby_content(self), view=self); return
+                await interaction.response.edit_message(view=_legacy_view_to_v2(self, content=friend_lobby_content(self), title="⚔️ DÉFI AMICAL")); return
             await interaction.response.defer()
             ok,msg,battle_id=ARENA_STORE.start_friend(self.p1,self.p2,self.wager)
             if not ok:
@@ -3071,7 +3071,11 @@ class BattleView(discord.ui.View):
             btn=discord.ui.Button(label=label, emoji=emoji, style=style, custom_id=f"arena:{state.battle_id[:12]}:{state.turn_no}:{action}")
             if action == "ultimate" and actor.ultimate_cd > 0:
                 btn.disabled=True
-            async def action_cb(interaction: discord.Interaction, act=action):
+            turn_at_render = state.turn_no
+            async def action_cb(interaction: discord.Interaction, act=action, turn_at_render=turn_at_render):
+                if self.state.turn_no != turn_at_render:
+                    await interaction.response.send_message("⏳ Ce bouton appartient à un ancien tour. Utilise les actions du tour actuel.", ephemeral=True)
+                    return
                 await handle_battle_action(interaction, self.state, act)
             btn.callback=action_cb
             self.add_item(btn)
@@ -3100,15 +3104,25 @@ async def _turn_timeout(state: BattleState, surface, turn_token: int):
         await asyncio.sleep(60)
         if state.finished or state.turn_no != turn_token or state.battle_id not in ACTIVE_BATTLES:
             return
-        loser=state.actor(); winner=state.target()
-        state.finished=True; state.winner_index=1-state.current
-        state.log.append(f"⏱️ **{loser.name}** n'a pas joué en 60 secondes : défaite par forfait.")
-        await finish_battle_surface(surface,state,winner)
+        lock = BATTLE_ACTION_LOCKS.setdefault(state.battle_id, asyncio.Lock())
+        async with lock:
+            if state.finished or state.turn_no != turn_token or state.battle_id not in ACTIVE_BATTLES:
+                return
+            loser=state.actor(); winner=state.target()
+            state.finished=True; state.winner_index=1-state.current
+            state.log.append(f"⏱️ **{loser.name}** n'a pas joué en 60 secondes : défaite par forfait.")
+            await finish_battle_surface(surface,state,winner)
     except asyncio.CancelledError:
         pass
 
 
 async def handle_battle_action(interaction: discord.Interaction, state: BattleState, action: str):
+    lock = BATTLE_ACTION_LOCKS.setdefault(state.battle_id, asyncio.Lock())
+    async with lock:
+        await _handle_battle_action_locked(interaction, state, action)
+
+
+async def _handle_battle_action_locked(interaction: discord.Interaction, state: BattleState, action: str):
     if state.finished or state.battle_id not in ACTIVE_BATTLES:
         await interaction.response.send_message("Ce combat est déjà terminé.", ephemeral=True); return
     actor=state.actor()
@@ -3219,16 +3233,12 @@ async def finish_battle_interaction(interaction: discord.Interaction, state: Bat
     # La base est réglée une seule fois. Ensuite on retire immédiatement le combat actif.
     _, payout = ARENA_STORE.finish(state.battle_id, winner.user_id)
     ACTIVE_BATTLES.pop(state.battle_id, None)
+    BATTLE_ACTION_LOCKS.pop(state.battle_id, None)
 
     # IMPORTANT : mettre à jour le panneau AVANT les logs/succès.
     # Ainsi, même si un système secondaire plante, Discord ne garde jamais un ancien
     # tour cliquable qui répond ensuite « combat déjà terminé ».
-    await interaction.edit_original_response(
-        content=_arena_result_text(winner, payout),
-        attachments=[],
-        embeds=[],
-        view=ArenaView(),
-    )
+    await _edit_arena_surface(interaction, content=_arena_result_text(winner, payout), view=ArenaView())
 
     await _arena_post_finish_bookkeeping(interaction.guild, state, winner, payout)
     for f in state.fighters:
@@ -3244,6 +3254,7 @@ async def finish_battle_surface(surface, state: BattleState, winner: Fighter):
 
     _, payout = ARENA_STORE.finish(state.battle_id, winner.user_id)
     ACTIVE_BATTLES.pop(state.battle_id, None)
+    BATTLE_ACTION_LOCKS.pop(state.battle_id, None)
 
     # Même correction pour les tours du Champion / forfaits, avec support natif
     # des réponses éphémères afin d'éviter l'erreur Discord 10008 Unknown Message.
@@ -4233,10 +4244,33 @@ def start_expedition_monitor(run_id: str):
     EXPEDITION_MONITORS[str(run_id)] = asyncio.create_task(monitor_expedition(str(run_id)))
 
 
+async def _replace_v2_with_legacy(interaction: discord.Interaction, *, content=None, view=None, file=None, embed=None):
+    """Navigate from a Components V2 message to a classic View.
+
+    Discord forbids `content` on V2 messages and does not permit a classic
+    View to be attached to an existing V2 message. Acknowledge the component,
+    remove its old private window and send the destination as a new private
+    message. Never edit the original V2 message with legacy fields.
+    """
+    await interaction.response.defer()
+    try:
+        await interaction.delete_original_response()
+    except (discord.HTTPException, discord.NotFound, discord.Forbidden) as exc:
+        print(f"[NAVIGATION V2] Ancienne fenêtre non supprimée : {exc}")
+    kwargs = {"ephemeral": True, "view": view}
+    if content is not None:
+        kwargs["content"] = content
+    if file is not None:
+        kwargs["file"] = file
+    if embed is not None:
+        kwargs["embed"] = embed
+    return await interaction.followup.send(**kwargs)
+
+
 async def open_exploration_location(interaction: discord.Interaction, location_key: str, *, edit: bool = False):
     if location_key not in LOCATION_META:
         if edit:
-            await interaction.response.edit_message(content="Zone inconnue.", attachments=[], embeds=[], view=WorldHubView())
+            await _replace_v2_with_legacy(interaction, content="Zone inconnue.", view=WorldHubView(private_session=True))
         else:
             await interaction.response.send_message("Zone inconnue.", ephemeral=True)
         return
@@ -4247,7 +4281,7 @@ async def open_exploration_location(interaction: discord.Interaction, location_k
     content = location_home_content(interaction.user.id, location_key)
     view = ExplorationLocationView(interaction.user.id, location_key)
     if edit:
-        await interaction.response.edit_message(content=content, attachments=[file], embeds=[], view=view)
+        await _replace_v2_with_legacy(interaction, content=content, file=file, view=view)
     else:
         # Première ouverture : une seule fenêtre privée est créée. Ensuite toute la navigation l'édite.
         await interaction.response.send_message(content=content, file=file, view=view, ephemeral=True)
@@ -5792,6 +5826,11 @@ def _legacy_view_to_v2(view: discord.ui.View, *, content: str | None = None, fil
         children.append(discord.ui.TextDisplay("*Aucune action disponible sur cet écran.*"))
 
     out.add_item(discord.ui.Container(*children, accent_colour=accent))
+    # Les menus de sélection ne sont pas des boutons : l'ancienne conversion
+    # les supprimait, bloquant le choix de classe et le défi entre amis.
+    for item in list(getattr(view, 'children', [])):
+        if isinstance(item, discord.ui.Select):
+            out.add_item(discord.ui.ActionRow(item))
     return out
 
 def _place_title_from_filename(filename: str) -> str:
