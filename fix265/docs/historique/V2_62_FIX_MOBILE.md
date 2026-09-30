@@ -1,0 +1,1 @@
+V2.62 : cité mobile compacte, 8 destinations sur 4 rangées de 2 boutons, retour monde et tutoriel. Conserve le reset officiel V2.61 sans le réexécuter si son marqueur est déjà présent. Vérification statique et compilation uniquement ; test Discord réel à effectuer après déploiement.
