@@ -49,7 +49,7 @@ def _v2_view(title: str, description: str, legacy_view: discord.ui.View | None =
 async def _edit_v2(interaction, *, title, description, legacy_view=None, file=None, filename=None, accent=0x6D4B37):
     mobile = DISPLAY_MODE.is_mobile(interaction.user.id)
     view=_v2_view(title, description, legacy_view, image=(filename if file and not mobile else None), accent=accent)
-    await interaction.response.edit_message(content=None, attachments=([file] if file and not mobile else []), view=view)
+    await interaction.response.edit_message(attachments=([file] if file and not mobile else []), view=view)
 
 async def _send_v2(interaction, *, title, description, legacy_view=None, file=None, filename=None, ephemeral=True, accent=0x6D4B37):
     mobile = DISPLAY_MODE.is_mobile(interaction.user.id)
@@ -712,62 +712,35 @@ class PostBattleView(discord.ui.View):
 
 
 async def show_lobby(interaction: discord.Interaction, *, edit=False):
+    """Entrée Ashkar exclusivement Components V2 (compatible avec la carte V2)."""
     lvl = CASTLE.current_level(interaction.user.id)
     max_floor = STORE.progress(interaction.user.id)
     next_floor = max_floor + 1
+    poster = ASSET_DIR / "tower_poster.png"
+    file = None
+    if poster.exists() and not DISPLAY_MODE.is_mobile(interaction.user.id):
+        file = discord.File(poster, filename="ashkar.png")
 
     if lvl < 5:
-        embed = discord.Embed(
-            title="🔒 La Tour d'Ashkar",
-            description=f"La brume se dissipe, révélant une tour gigantesque… mais une force invisible te repousse.\n\n**Niveau 5 requis** • Ton niveau : **{lvl}**",
-            color=0x3A3A46,
-        )
-        if edit:
-            await interaction.response.edit_message(content=None, embed=embed, attachments=[], view=None)
-        else:
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-        return
-
-    if next_floor > 10:
-        embed = discord.Embed(
-            title="🏆 La Tour d'Ashkar",
-            description="Tu as terminé les **10 étages actuellement disponibles**. D'autres étages seront révélés plus tard…",
-            color=discord.Color.gold(),
-        )
-        poster = ASSET_DIR / "tower_poster.png"
-        if poster.exists():
-            file = discord.File(poster, filename="ashkar.png")
-            embed.set_image(url="attachment://ashkar.png")
-            if edit:
-                await interaction.response.edit_message(content=None, embed=embed, attachments=[file], view=None)
-            else:
-                await interaction.response.send_message(embed=embed, file=file, ephemeral=True)
-        else:
-            if edit:
-                await interaction.response.edit_message(content=None, embed=embed, attachments=[], view=None)
-            else:
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-        return
-
-    view = TowerClassView(interaction.user.id)
-    content = _tower_class_content(interaction.user.id, next_floor, None)
-    poster = ASSET_DIR / "tower_poster.png"
-    if DISPLAY_MODE.is_mobile(interaction.user.id):
-        poster = Path("__mobile_no_poster__")
-    embed = discord.Embed(
-        title="🗼 La Tour d'Ashkar",
-        description="Entre dans l’étage avec tes techniques actuelles. De nouvelles techniques se débloquent avec les niveaux.",
-        color=0x5B475E,
-    )
-    if poster.exists():
-        file = discord.File(poster, filename="ashkar.png")
-        embed.set_image(url="attachment://ashkar.png")
-        if edit:
-            await interaction.response.edit_message(content=content, embed=embed, attachments=[file], view=view)
-        else:
-            await interaction.response.send_message(content=content, embed=embed, file=file, view=view, ephemeral=True)
+        title = "🔒 La Tour d'Ashkar"
+        description = ("La brume se dissipe, révélant une tour gigantesque… "
+                       "mais une force invisible te repousse.\n\n"
+                       f"**Niveau 5 requis** • Ton niveau : **{lvl}**")
+        view = None
+        file = None
+    elif next_floor > 10:
+        title = "🏆 La Tour d'Ashkar"
+        description = "Tu as terminé les **10 étages actuellement disponibles**."
+        view = None
     else:
-        if edit:
-            await interaction.response.edit_message(content=content, embed=embed, attachments=[], view=view)
-        else:
-            await interaction.response.send_message(content=content, embed=embed, view=view, ephemeral=True)
+        title = "🗼 La Tour d'Ashkar"
+        description = (_tower_class_content(interaction.user.id, next_floor)
+                       + "\n\nEntre dans l'étage avec tes techniques actuelles.")
+        view = TowerClassView(interaction.user.id)
+
+    kwargs = dict(title=title, description=description, legacy_view=view,
+                  file=file, filename="ashkar.png", accent=0x5B475E)
+    if edit:
+        await _edit_v2(interaction, **kwargs)
+    else:
+        await _send_v2(interaction, **kwargs)
