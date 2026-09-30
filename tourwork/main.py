@@ -888,7 +888,7 @@ class TutorialStartView(_TutorialBase):
             v2_header("🚀 3/5 — BIEN DÉMARRER","Un itinéraire simple pour tes premières minutes."),
             v2_separator(True),
             discord.ui.TextDisplay(
-                "**1. 🎁 Récupère ta récompense journalière** à la Banque.\n"
+                "**1. 🎁 Récupère ta récompense journalière** au Château.\n"
                 "**2. 🌿 Lance une expédition mains nues** : aucun équipement n'est nécessaire pour commencer.\n"
                 "**3. 📜 Consulte les Petites Annonces** pour trouver un contrat adapté.\n"
                 "**4. 🍺 Passe à la Taverne** pour découvrir ses activités et gagner un peu d'XP.\n"
@@ -913,7 +913,8 @@ class TutorialPlacesView(_TutorialBase):
             v2_header("🏘️ 4/5 — LES LIEUX À CONNAÎTRE","Pas besoin de tout mémoriser."),
             v2_separator(True),
             discord.ui.TextDisplay(
-                "🏦 **Banque** — récompense journalière et gestion de tes Gold.\n"
+                "🏰 **Château** — récompense journalière et tableau de bord personnel.\n"
+                "🏦 **Banque** — gestion de tes Gold.\n"
                 "🛒 **Marché** — commerces et ressources utiles.\n"
                 "🍺 **Taverne** — jeux et activités accessibles rapidement.\n"
                 "📜 **Petites Annonces** — contrats et récompenses.\n"
@@ -4478,6 +4479,9 @@ class NPCTargetView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180); self.add_item(NPCTargetSelect())
 
+from larceny_flavor import random_larceny_scene
+from temporary_popups import send_temporary_followup
+
 class ThiefView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -4490,13 +4494,13 @@ class ThiefView(discord.ui.View):
             await safe_defer(i)
             r=DARK_STORE.petty_larceny(i.user.id)
             if not r.get('ok'):
-                await i.followup.send(f"⏳ Nouveau larcin dans **{short_time(r.get('cooldown',0))}**.",ephemeral=True); return
+                await send_temporary_followup(i, f"⏳ Nouveau larcin dans **{short_time(r.get('cooldown',0))}**."); return
             xp_gain = random.randint(5, 10)
             CASTLE_STORE.add_xp(i.user.id, xp_gain)
             rep=DARK_STORE.criminal_reputation(i.user.id)
             if rep['tier']: await announce_achievement(i,f"criminal_reputation:{rep['tier']}")
             if r['amount']: await announce_gold_activity(i.guild,i.user,int(r['amount']),"Petit larcin",public=False)
-            await i.followup.send(f"🪙 Petit larcin réussi : **+{r['amount']} Gold**, **+{xp_gain} XP**. Réputation : **{rep['label']}**.\n⏳ Nouveau larcin dans **30 min**.",ephemeral=True)
+            await send_temporary_followup(i, f"🎭 **{i.user.display_name}** {random_larceny_scene()} !\n🪙 Petit larcin réussi : **+{r['amount']} Gold**, **+{xp_gain} XP**. Réputation : **{rep['label']}**.\n⏳ Nouveau larcin dans **30 min**.")
         async def npc_cb(i):
             if DARK_STORE.criminal_reputation(i.user.id)['label'] not in ("Petite frappe","Bandit","Criminel","Seigneur de la Ruelle"):
                 await i.response.send_message("🔒 Rang **Petite frappe** requis.",ephemeral=True); return
