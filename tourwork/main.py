@@ -676,7 +676,7 @@ class CityHubV2(discord.ui.LayoutView):
         board = discord.ui.Button(label="Panneau central", emoji="📋", style=discord.ButtonStyle.primary, custom_id="altherya:v210:city:board")
         async def world_cb(interaction: discord.Interaction):
             file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
-            await interaction.response.edit_message(content=None, attachments=[file], view=WorldHubV2(private_session=True))
+            await interaction.response.edit_message(attachments=[file], view=WorldHubV2(private_session=True))
         async def board_cb(interaction: discord.Interaction):
             p = CASTLE_STORE.profile(interaction.user.id)
             lvl, cur, need = level_from_xp(p['xp'])
@@ -3833,20 +3833,25 @@ class ExplorationLocationView(discord.ui.View):
             active_now = EXPEDITION_STORE.active_run(self.owner_id)
             if active_now and active_now.finished:
                 await finalize_expedition_run(active_now.run_id)
-            await interaction.response.edit_message(
-                content=location_home_content(self.owner_id, self.location_key),
-                view=ExplorationLocationView(self.owner_id, self.location_key),
-            )
+            await interaction.response.defer()
+            path = _zone_asset(self.location_key)
+            legacy_view = ExplorationLocationView(self.owner_id, self.location_key)
+            mobile = _is_mobile(self.owner_id)
+            filename = f"{self.location_key}.png"
+            meta = LOCATION_META[self.location_key]
+            v2view = _legacy_view_to_v2(legacy_view, content=location_home_content(self.owner_id, self.location_key), filename=None if mobile else filename, title=f"{meta.get('emoji', '🌍')} {meta.get('name', self.location_key).upper()}")
+            file = None if mobile else discord.File(path, filename=filename)
+            await interaction.edit_original_response(attachments=[] if mobile else [file], view=v2view)
 
         async def world_cb(interaction: discord.Interaction):
             if interaction.user.id != self.owner_id:
                 await interaction.response.send_message("Cette interface appartient à un autre joueur.", ephemeral=True)
                 return
             if _is_mobile(interaction.user.id):
-                await interaction.response.edit_message(content=None, attachments=[], view=MobileWorldView(interaction.user.id))
+                await interaction.response.edit_message(attachments=[], view=MobileWorldView(interaction.user.id))
             else:
                 file = discord.File(WORLD_FORGE.WORLD_MAP, filename="elyndor_map.png")
-                await interaction.response.edit_message(content=None, attachments=[file], view=WorldHubV2(private_session=True))
+                await interaction.response.edit_message(attachments=[file], view=WorldHubV2(private_session=True))
 
         refresh.callback = refresh_cb
         world.callback = world_cb
@@ -4230,23 +4235,32 @@ def start_expedition_monitor(run_id: str):
 
 
 async def open_exploration_location(interaction: discord.Interaction, location_key: str, *, edit: bool = False):
+    """Ouvre une zone d'exploration en respectant Components V2."""
     if location_key not in LOCATION_META:
         if edit:
-            await interaction.response.edit_message(content="Zone inconnue.", attachments=[], embeds=[], view=WorldHubView())
+            await interaction.response.edit_message(attachments=[], view=WorldHubV2(private_session=True))
         else:
             await interaction.response.send_message("Zone inconnue.", ephemeral=True)
         return
     active = EXPEDITION_STORE.active_run(interaction.user.id)
     if active and active.finished:
         await finalize_expedition_run(active.run_id)
-    file = discord.File(_zone_asset(location_key), filename=f"{location_key}.png")
+    path = _zone_asset(location_key)
     content = location_home_content(interaction.user.id, location_key)
-    view = ExplorationLocationView(interaction.user.id, location_key)
+    legacy_view = ExplorationLocationView(interaction.user.id, location_key)
+    mobile = _is_mobile(interaction.user.id)
+    filename = f"{location_key}.png"
+    meta = LOCATION_META[location_key]
+    title = f"{meta.get('emoji', '🌍')} {meta.get('name', location_key).upper()}"
+    v2view = _legacy_view_to_v2(legacy_view, content=content, filename=None if mobile else filename, title=title)
     if edit:
-        await interaction.response.edit_message(content=content, attachments=[file], embeds=[], view=view)
+        await interaction.response.defer()
+        file = None if mobile else discord.File(path, filename=filename)
+        await interaction.edit_original_response(attachments=[] if mobile else [file], view=v2view)
+    elif mobile:
+        await interaction.response.send_message(view=v2view, ephemeral=True)
     else:
-        # Première ouverture : une seule fenêtre privée est créée. Ensuite toute la navigation l'édite.
-        await interaction.response.send_message(content=content, file=file, view=view, ephemeral=True)
+        await interaction.response.send_message(file=discord.File(path, filename=filename), view=v2view, ephemeral=True)
 
 
 # ============================================================
