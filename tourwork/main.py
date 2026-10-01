@@ -583,22 +583,32 @@ class WorldHubV2(discord.ui.LayoutView):
                     file = discord.File(PLACES / "hub.png", filename="altherya_city.png")
                     view = CityHubV2(private_session=True)
                     if self.private_session:
-                        await interaction.response.edit_message(content=None, attachments=[file], view=view)
+                        await interaction.response.edit_message(attachments=[file], view=view)
                     else:
                         await interaction.response.send_message(file=file, view=view, ephemeral=True)
                     return
                 if destination == "khaz":
                     level = CASTLE_STORE.current_level(interaction.user.id)
                     if level < 3:
-                        await interaction.response.send_message(f"🔒 **KHAZ'GORAM** se débloque au niveau **3**. Ton niveau : **{level}**.", ephemeral=True)
+                        await interaction_reply(interaction, f"🔒 **KHAZ'GORAM** se débloque au niveau **3**. Ton niveau : **{level}**.")
                         return
-                    file = discord.File(WORLD_FORGE.KHAZ_GORAM, filename="khaz_goram.png")
-                    embed = discord.Embed(title="⚒️ La Forge de KHAZ'GORAM", description="Thorgar façonne ici les équipements des légendes.", color=0xB67A2A)
-                    embed.set_image(url="attachment://khaz_goram.png")
                     if self.private_session:
-                        await interaction.response.edit_message(content=None, embed=embed, attachments=[file], view=WORLD_FORGE.KhazGoramView())
+                        await WORLD_FORGE.edit_with_image(
+                            interaction,
+                            WORLD_FORGE.KHAZ_GORAM,
+                            title="⚒️ La Forge de KHAZ'GORAM",
+                            description="Thorgar façonne ici les équipements des légendes.",
+                            view=WORLD_FORGE.KhazGoramView(),
+                        )
                     else:
-                        await interaction.response.send_message(embed=embed, file=file, view=WORLD_FORGE.KhazGoramView(), ephemeral=True)
+                        await WORLD_FORGE.send_with_image(
+                            interaction,
+                            WORLD_FORGE.KHAZ_GORAM,
+                            title="⚒️ La Forge de KHAZ'GORAM",
+                            description="Thorgar façonne ici les équipements des légendes.",
+                            view=WORLD_FORGE.KhazGoramView(),
+                            ephemeral=True,
+                        )
                     return
                 if destination == "ashkar":
                     await TOWER.show_lobby(interaction, edit=self.private_session)
@@ -619,7 +629,7 @@ class WorldHubV2(discord.ui.LayoutView):
             _set_display_mode(interaction.user.id, "pc")
             TUTORIAL_STORE.start(interaction.user.id)
             await interaction.response.edit_message(
-                content=None, attachments=[],
+                attachments=[],
                 view=TutorialIntroView(interaction.user.id, "pc", replay=True)
             )
         tutorial.callback = tutorial_cb
@@ -1052,18 +1062,28 @@ class DisplayModeSelectView(discord.ui.LayoutView):
         pc=discord.ui.Button(label="Mode PC",emoji="🖥️",style=discord.ButtonStyle.primary,custom_id="altherya:display:pc")
         mobile=discord.ui.Button(label="Mode Mobile",emoji="📱",style=discord.ButtonStyle.success,custom_id="altherya:display:mobile")
         async def pc_cb(i):
+            if not await safe_defer(i, ephemeral=True):
+                return
             _set_display_mode(i.user.id,"pc")
-            if not TUTORIAL_STORE.completed(i.user.id):
-                TUTORIAL_STORE.start(i.user.id)
-                return await i.response.send_message(view=TutorialIntroView(i.user.id,"pc"),ephemeral=True)
-            file=discord.File(WORLD_FORGE.WORLD_MAP,filename="elyndor_map.png")
-            await i.response.send_message(file=file,view=WorldHubV2(private_session=True),ephemeral=True)
+            try:
+                if not TUTORIAL_STORE.completed(i.user.id):
+                    TUTORIAL_STORE.start(i.user.id)
+                    return await i.followup.send(view=TutorialIntroView(i.user.id,"pc"),ephemeral=True)
+                file=discord.File(WORLD_FORGE.WORLD_MAP,filename="elyndor_map.png")
+                await i.followup.send(file=file,view=WorldHubV2(private_session=True),ephemeral=True)
+            except discord.NotFound:
+                return
         async def mobile_cb(i):
+            if not await safe_defer(i, ephemeral=True):
+                return
             _set_display_mode(i.user.id,"mobile")
-            if not TUTORIAL_STORE.completed(i.user.id):
-                TUTORIAL_STORE.start(i.user.id)
-                return await i.response.send_message(view=TutorialIntroView(i.user.id,"mobile"),ephemeral=True)
-            await i.response.send_message(view=MobileWorldView(i.user.id),ephemeral=True)
+            try:
+                if not TUTORIAL_STORE.completed(i.user.id):
+                    TUTORIAL_STORE.start(i.user.id)
+                    return await i.followup.send(view=TutorialIntroView(i.user.id,"mobile"),ephemeral=True)
+                await i.followup.send(view=MobileWorldView(i.user.id),ephemeral=True)
+            except discord.NotFound:
+                return
         pc.callback=pc_cb; mobile.callback=mobile_cb
         panel=v2_container(
             v2_header("👑 ALTHERYA — ROYAUME DE IV", "Choisis l'interface adaptée à ton appareil."),
@@ -4388,15 +4408,22 @@ class ThiefTargetSelect(discord.ui.UserSelect):
     async def callback(self, interaction: discord.Interaction):
         target = self.values[0]
         if target.bot:
-            await interaction.response.send_message("🐺 Le Voleur refuse de cibler un bot.", ephemeral=True)
+            await interaction_reply(interaction, "🐺 Le Voleur refuse de cibler un bot.")
+            return
+        if target.id == interaction.user.id:
+            await interaction_reply(interaction, "🐺 Tu ne peux pas te voler toi-même.")
+            return
+        if not await safe_defer(interaction, ephemeral=True):
             return
         result = DARK_STORE.steal(interaction.user.id, target.id)
         if not result.get("ok"):
             if result.get("cooldown"):
-                await interaction.response.send_message(
-                    f"⏳ Tu dois attendre **{short_time(result['cooldown'])}** avant un nouveau vol.", ephemeral=True)
+                await interaction_reply(
+                    interaction,
+                    f"⏳ Tu dois attendre **{short_time(result['cooldown'])}** avant un nouveau vol."
+                )
             else:
-                await interaction.response.send_message(result.get("message", "Vol impossible."), ephemeral=True)
+                await interaction_reply(interaction, result.get("message", "Vol impossible."))
             return
 
         outcome = result["outcome"]
@@ -4437,7 +4464,7 @@ class ThiefTargetSelect(discord.ui.UserSelect):
             else:
                 await announce_public_result(interaction.guild, interaction.user, "💥 Voleur démasqué",
                                              f"a tenté de voler {target.mention} et s'est fait tabasser, sans perte de Gold.", color=discord.Color.red())
-        await interaction.response.send_message(text + risk + "\n⏳ Nouveau vol possible dans 1 heure.", ephemeral=True)
+        await interaction_reply(interaction, text + risk + "\n⏳ Nouveau vol possible dans 1 heure.")
 
 
 class ThiefTargetView(discord.ui.View):
@@ -4458,10 +4485,12 @@ class NPCTargetSelect(discord.ui.Select):
         options=[discord.SelectOption(label=v[0], value=k, emoji="🪙", description=f"Réussite : {int(v[3]*100)}% • Butin {v[1]}–{v[2]} Gold") for k,v in __import__('dark_alley').NPC_THEFT_TARGETS.items()]
         super().__init__(placeholder="Choisir un PNJ à voler...", options=options, custom_id="legacy:alley:npc:target")
     async def callback(self, interaction: discord.Interaction):
+        if not await safe_defer(interaction, ephemeral=True):
+            return
         result=DARK_STORE.steal_npc(interaction.user.id,self.values[0])
         if not result.get('ok'):
             msg=(f"⏳ Nouveau vol dans **{short_time(result['cooldown'])}**." if result.get('cooldown') else result.get('message','Vol impossible.'))
-            await interaction.response.send_message(msg,ephemeral=True); return
+            await interaction_reply(interaction, msg); return
         if result['outcome']=='success':
             CASTLE_STORE.add_xp(interaction.user.id, XP_REWARDS["npc_theft_success"])
             rep=DARK_STORE.criminal_reputation(interaction.user.id)
@@ -4473,7 +4502,7 @@ class NPCTargetSelect(discord.ui.Select):
             if amount: await announce_gold_activity(interaction.guild,interaction.user,-amount,f"Pris en volant {result['target']}",public=False)
             msg=f"💥 **{result['target']}** te surprend et te fait payer **{amount} Gold** avant de te chasser !" if amount else f"💥 **{result['target']}** te surprend. Tu prends la fuite !"
         else: msg=f"😑 **{result['target']}** ne te laisse aucune ouverture."
-        await interaction.response.send_message(msg+"\n⏳ Nouveau vol possible dans 1 heure.",ephemeral=True)
+        await interaction_reply(interaction, msg+"\n⏳ Nouveau vol possible dans 1 heure.")
 
 class NPCTargetView(discord.ui.View):
     def __init__(self):
@@ -4503,14 +4532,17 @@ class ThiefView(discord.ui.View):
             await send_temporary_followup(i, f"🎭 **{i.user.display_name}** {random_larceny_scene()} !\n🪙 Petit larcin réussi : **+{r['amount']} Gold**, **+{xp_gain} XP**. Réputation : **{rep['label']}**.\n⏳ Nouveau larcin dans **30 min**.")
         async def npc_cb(i):
             if DARK_STORE.criminal_reputation(i.user.id)['label'] not in ("Petite frappe","Bandit","Criminel","Seigneur de la Ruelle"):
-                await i.response.send_message("🔒 Rang **Petite frappe** requis.",ephemeral=True); return
-            await safe_defer(i); await edit_with_asset(i,PLACES/"alley_thief.png","voleur.png",NPCTargetView(),"🎭 **Choisis le PNJ que tu veux tenter de voler.**")
+                await interaction_reply(i, "🔒 Rang **Petite frappe** requis."); return
+            if not await safe_defer(i): return
+            await edit_with_asset(i,PLACES/"alley_thief.png","voleur.png",NPCTargetView(),"🎭 **Choisis le PNJ que tu veux tenter de voler.**")
         async def steal_cb(i):
             if DARK_STORE.criminal_reputation(i.user.id)['label'] not in ("Petite frappe","Bandit","Criminel","Seigneur de la Ruelle"):
-                await i.response.send_message("🔒 Rang **Petite frappe** requis.",ephemeral=True); return
+                await interaction_reply(i, "🔒 Rang **Petite frappe** requis."); return
             cd=DARK_STORE.cooldown_remaining(i.user.id,"steal")
-            if cd: await i.response.send_message(f"⏳ Nouveau vol dans **{short_time(cd)}**.",ephemeral=True); return
-            await safe_defer(i); await edit_with_asset(i,PLACES/"alley_thief.png","voleur.png",ThiefTargetView(),"🐺 **Choisis le joueur à voler.**")
+            if cd:
+                await interaction_reply(i, f"⏳ Nouveau vol dans **{short_time(cd)}**."); return
+            if not await safe_defer(i): return
+            await edit_with_asset(i,PLACES/"alley_thief.png","voleur.png",ThiefTargetView(),"🐺 **Choisis le joueur à voler.**")
         async def crime_cb(i):
             r=DARK_STORE.commit_crime(i.user.id)
             if not r.get('ok'):
@@ -4919,6 +4951,7 @@ def bj_cards_text(cards: list[dict]) -> str:
 
 
 BLACKJACK_STATES: dict[str, dict] = {}
+BLACKJACK_FINISHING: set[str] = set()
 
 
 def blackjack_render_path(session_id: str) -> Path:
@@ -4926,7 +4959,9 @@ def blackjack_render_path(session_id: str) -> Path:
 
 
 async def show_blackjack(interaction: discord.Interaction, session_id: str, *, reveal: bool = False, status: str = "", view: discord.ui.View | None = None):
-    st = BLACKJACK_STATES[session_id]
+    st = BLACKJACK_STATES.get(session_id)
+    if not st:
+        return
     path = blackjack_render_path(session_id)
     if not _is_mobile(interaction.user.id):
         render_blackjack(
@@ -4982,55 +5017,64 @@ async def start_blackjack(interaction: discord.Interaction, session_id: str, wag
 
 
 async def finish_blackjack(interaction: discord.Interaction, session_id: str, natural: bool=False, dealer_natural: bool=False):
-    st = BLACKJACK_STATES.get(session_id)
-    if not st:
+    # Plusieurs clics rapides / timeout peuvent tenter de terminer la même partie.
+    # Une seule coroutine a le droit de faire le règlement et de supprimer l'état.
+    if session_id in BLACKJACK_FINISHING:
         return
-    p = bj_total(st["player"])
-    d = bj_total(st["dealer"])
-    if not dealer_natural:
-        if _is_mobile(interaction.user.id) and p <= 21:
-            await show_blackjack(interaction, session_id, reveal=True, view=discord.ui.View(), status="🎩 Le croupier révèle sa main…")
-            await asyncio.sleep(0.32)
-        while p <= 21 and d < 17:
-            st["dealer"].append(st["deck"].pop())
-            d = bj_total(st["dealer"])
-            if _is_mobile(interaction.user.id):
-                await show_blackjack(interaction, session_id, reveal=True, view=discord.ui.View(), status="🎴 Le croupier tire une carte…")
-                await asyncio.sleep(0.34)
-    wager = st["wager"]
+    st = BLACKJACK_STATES.get(session_id)
+    if not st or st.get("finished"):
+        return
+    BLACKJACK_FINISHING.add(session_id)
+    st["finished"] = True
+    try:
+        p = bj_total(st["player"])
+        d = bj_total(st["dealer"])
+        if not dealer_natural:
+            if _is_mobile(interaction.user.id) and p <= 21:
+                await show_blackjack(interaction, session_id, reveal=True, view=discord.ui.View(), status="🎩 Le croupier révèle sa main…")
+                await asyncio.sleep(0.32)
+            while p <= 21 and d < 17:
+                st["dealer"].append(st["deck"].pop())
+                d = bj_total(st["dealer"])
+                if _is_mobile(interaction.user.id):
+                    await show_blackjack(interaction, session_id, reveal=True, view=discord.ui.View(), status="🎴 Le croupier tire une carte…")
+                    await asyncio.sleep(0.34)
+        wager = st["wager"]
 
-    if natural and dealer_natural:
-        payout, result = wager, f"🤝 Deux Black Jacks : mise de **{wager} Gold** rendue."
-    elif dealer_natural:
-        payout, result = 0, "🩸 **Black Jack du croupier.** La maison gagne."
-    elif p > 21:
-        payout, result = 0, "💀 **Tu dépasses 21.** La maison ramasse la mise."
-    elif natural and len(st["player"]) == 2:
-        payout, result = int(round(wager * 2.5)), f"🏆 **BLACK JACK !** Paiement : **{int(round(wager * 2.5))} Gold**."
-    elif d > 21 or p > d:
-        payout, result = wager * 2, f"🏆 **Tu gagnes !** Paiement : **{wager * 2} Gold**."
-    elif p == d:
-        payout, result = wager, f"🤝 **Égalité.** Mise de **{wager} Gold** rendue."
-    else:
-        payout, result = 0, "🩸 **Le croupier gagne.**"
+        if natural and dealer_natural:
+            payout, result = wager, f"🤝 Deux Black Jacks : mise de **{wager} Gold** rendue."
+        elif dealer_natural:
+            payout, result = 0, "🩸 **Black Jack du croupier.** La maison gagne."
+        elif p > 21:
+            payout, result = 0, "💀 **Tu dépasses 21.** La maison ramasse la mise."
+        elif natural and len(st["player"]) == 2:
+            payout, result = int(round(wager * 2.5)), f"🏆 **BLACK JACK !** Paiement : **{int(round(wager * 2.5))} Gold**."
+        elif d > 21 or p > d:
+            payout, result = wager * 2, f"🏆 **Tu gagnes !** Paiement : **{wager * 2} Gold**."
+        elif p == d:
+            payout, result = wager, f"🤝 **Égalité.** Mise de **{wager} Gold** rendue."
+        else:
+            payout, result = 0, "🩸 **Le croupier gagne.**"
 
-    settled = CASINO_STORE.settle(session_id, payout)
-    actual_payout = int(settled.get("payout", payout))
-    if actual_payout > payout:
-        result += f"  🎉 **Gold x2 : {actual_payout} Gold crédités.**"
-    payout = actual_payout
-    if payout:
-        CASTLE_STORE.record(interaction.user.id, "gold_earned", payout)
-    net_gold = int(payout) - int(wager)
-    if net_gold:
-        await announce_gold_activity(interaction.guild, interaction.user, net_gold, "Casino — Black Jack")
-    wallet = settled.get("wallet", CASINO_STORE.wallet(st["owner"]))
-    await show_blackjack(
-        interaction, session_id, reveal=True,
-        status=f"{result}   •   Solde : {wallet} Gold",
-        view=CasinoResultView(st["owner"], "blackjack"),
-    )
-    BLACKJACK_STATES.pop(session_id, None)
+        settled = CASINO_STORE.settle(session_id, payout)
+        actual_payout = int(settled.get("payout", payout))
+        if actual_payout > payout:
+            result += f"  🎉 **Gold x2 : {actual_payout} Gold crédités.**"
+        payout = actual_payout
+        if payout:
+            CASTLE_STORE.record(interaction.user.id, "gold_earned", payout)
+        net_gold = int(payout) - int(wager)
+        if net_gold:
+            await announce_gold_activity(interaction.guild, interaction.user, net_gold, "Casino — Black Jack")
+        wallet = settled.get("wallet", CASINO_STORE.wallet(st["owner"]))
+        await show_blackjack(
+            interaction, session_id, reveal=True,
+            status=f"{result}   •   Solde : {wallet} Gold",
+            view=CasinoResultView(st["owner"], "blackjack"),
+        )
+    finally:
+        BLACKJACK_STATES.pop(session_id, None)
+        BLACKJACK_FINISHING.discard(session_id)
 
 
 class BlackjackView(discord.ui.View):
@@ -5070,6 +5114,8 @@ class BlackjackView(discord.ui.View):
         self.add_item(hit); self.add_item(stand)
 
     async def on_timeout(self):
+        if self.session_id in BLACKJACK_FINISHING:
+            return
         CASINO_STORE.refund(self.session_id)
         BLACKJACK_STATES.pop(self.session_id, None)
 
@@ -5779,17 +5825,24 @@ def _legacy_view_to_v2(view: discord.ui.View, *, content: str | None = None, fil
         children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
         children.append(discord.ui.TextDisplay(content))
 
-    buttons = [item for item in list(getattr(view, 'children', [])) if isinstance(item, discord.ui.Button)]
-    if buttons:
+    items = list(getattr(view, 'children', []))
+    buttons = [item for item in items if isinstance(item, discord.ui.Button)]
+    selects = [item for item in items if isinstance(item, (discord.ui.Select, discord.ui.UserSelect, discord.ui.RoleSelect, discord.ui.ChannelSelect, discord.ui.MentionableSelect))]
+    if buttons or selects:
         children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
-        children.append(discord.ui.TextDisplay("## ⚜️ Actions disponibles"))
-        for index, button in enumerate(buttons):
-            emoji = str(getattr(button, 'emoji', '') or '◆')
-            label = str(getattr(button, 'label', None) or 'Action')
-            description = getattr(button, "_altherya_v2_description", None) or _v2_action_description(button)
-            children.append(discord.ui.Section(f"### {emoji} {label}\n{description}", accessory=button))
-            if index != len(buttons) - 1:
-                children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
+        if buttons:
+            children.append(discord.ui.TextDisplay("## ⚜️ Actions disponibles"))
+            for index, button in enumerate(buttons):
+                emoji = str(getattr(button, 'emoji', '') or '◆')
+                label = str(getattr(button, 'label', None) or 'Action')
+                description = getattr(button, "_altherya_v2_description", None) or _v2_action_description(button)
+                children.append(discord.ui.Section(f"### {emoji} {label}\n{description}", accessory=button))
+                if index != len(buttons) - 1:
+                    children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
+        if selects:
+            children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
+            for select in selects:
+                children.append(discord.ui.ActionRow(select))
     else:
         children.append(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
         children.append(discord.ui.TextDisplay("*Aucune action disponible sur cet écran.*"))
@@ -5828,13 +5881,24 @@ async def edit_v2_surface(interaction: discord.Interaction, *, view: discord.ui.
     if (not mobile) and path is not None and filename:
         files=[discord.File(path,filename=filename)]
     v2=_legacy_view_to_v2(view,content=text or None,filename=(filename if files else None),title=title)
-    await interaction.edit_original_response(content=None, attachments=files, view=v2)
+    try:
+        await interaction.edit_original_response(attachments=files, view=v2)
+    except discord.NotFound as exc:
+        print(f"[V2] interaction expirée pendant edit_v2_surface: {exc}")
+        return
 
 async def edit_with_asset(interaction: discord.Interaction, path: Path, filename: str, view: discord.ui.View, content: str | None=None):
     mobile=_is_mobile(interaction.user.id)
     files=[] if mobile else [discord.File(path, filename=filename)]
     v2view = _legacy_view_to_v2(view, content=content, filename=(None if mobile else filename), title=_place_title_from_filename(filename))
-    await interaction.edit_original_response(content=None,attachments=files,view=v2view)
+    try:
+        await interaction.edit_original_response(attachments=files,view=v2view)
+    except discord.NotFound as exc:
+        # Une ancienne interface peut encore être cliquée après expiration du
+        # webhook d'interaction. Rien ne peut être édité dans ce cas, mais le
+        # callback ne doit jamais faire remonter une exception dans Discord.
+        print(f"[V2] interaction expirée pendant edit_with_asset: {exc}")
+        return
 
 EVENTS = BASE / "assets" / "events"
 
@@ -7760,27 +7824,8 @@ class ArenaFriendSelectView(discord.ui.View):
             await i.response.send_modal(_V211MemberModal("Choisir l’adversaire",picked))
         b.callback=cb; self.add_item(b)
 
-# Compatibilité avec les références historiques : pas de sélection de classe.
-# Ne pas réintroduire les boutons Ravageur / Gardien / Traqueur ici.
-
-class ThiefTargetView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=180)
-        b=discord.ui.Button(label="Rechercher une cible",emoji="🐺",style=discord.ButtonStyle.danger)
-        async def cb(i):
-            async def picked(ii,m):
-                sel=_LegacyThiefTargetSelect(); sel._values=[m]; await sel.callback(ii)
-            await i.response.send_modal(_V211MemberModal("Cible du vol",picked))
-        b.callback=cb; self.add_item(b)
-
-class NPCTargetView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=180); sel=_LegacyNPCTargetSelect()
-        for opt in sel.options:
-            b=discord.ui.Button(label=opt.label,emoji="🪙",style=discord.ButtonStyle.danger)
-            async def cb(i,v=opt.value):
-                x=_LegacyNPCTargetSelect(); x._values=[v]; await x.callback(i)
-            b.callback=cb; self.add_item(b)
+# Compatibilité avec les références historiques : les sélections de cibles
+# sont définies une seule fois plus haut et conservées telles quelles.
 
 class AdminAchievementView(discord.ui.View):
     def __init__(self,target_id:int,mode:str,page:int=0):

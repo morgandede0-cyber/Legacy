@@ -49,7 +49,15 @@ def _v2_view(title: str, description: str, legacy_view: discord.ui.View | None =
 async def _edit_v2(interaction, *, title, description, legacy_view=None, file=None, filename=None, accent=0x6D4B37):
     mobile = DISPLAY_MODE.is_mobile(interaction.user.id)
     view=_v2_view(title, description, legacy_view, image=(filename if file and not mobile else None), accent=accent)
-    await interaction.response.edit_message(attachments=([file] if file and not mobile else []), view=view)
+    attachments=([file] if file and not mobile else [])
+    try:
+        if interaction.response.is_done():
+            await interaction.edit_original_response(attachments=attachments, view=view)
+        else:
+            await interaction.response.edit_message(attachments=attachments, view=view)
+    except discord.NotFound as exc:
+        print(f"[TOUR] interaction expirée pendant l'affichage: {exc}")
+        return
 
 async def _send_v2(interaction, *, title, description, legacy_view=None, file=None, filename=None, ephemeral=True, accent=0x6D4B37):
     mobile = DISPLAY_MODE.is_mobile(interaction.user.id)

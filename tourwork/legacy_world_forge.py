@@ -547,15 +547,20 @@ async def edit_with_image(interaction: discord.Interaction, image_path: Path, *,
     v2=_v2_view(view,title=title,description=description,filename=(None if mobile else image_path.name))
     try:
         if not interaction.response.is_done():
-            await interaction.response.edit_message(content=None,attachments=([file] if file else []),view=v2)
+            await interaction.response.edit_message(attachments=([file] if file else []),view=v2)
         else:
-            await interaction.edit_original_response(content=None,attachments=([file] if file else []),view=v2)
+            await interaction.edit_original_response(attachments=([file] if file else []),view=v2)
     except discord.NotFound:
-        if mobile:
-            await interaction.followup.send(view=v2,ephemeral=True)
-        else:
-            fresh=discord.File(image_path,filename=image_path.name)
-            await interaction.followup.send(file=fresh,view=v2,ephemeral=True)
+        # Interaction ancienne/expirée : tenter une nouvelle réponse, puis
+        # abandonner proprement si le webhook est lui aussi expiré.
+        try:
+            if mobile:
+                await interaction.followup.send(view=v2,ephemeral=True)
+            else:
+                fresh=discord.File(image_path,filename=image_path.name)
+                await interaction.followup.send(file=fresh,view=v2,ephemeral=True)
+        except discord.NotFound:
+            return
 
 async def send_with_image(interaction: discord.Interaction, image_path: Path, *, title: str, description: str, view: discord.ui.View, ephemeral=False):
     mobile = DISPLAY_MODE.is_mobile(interaction.user.id)
